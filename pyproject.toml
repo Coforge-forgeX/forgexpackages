@@ -1,0 +1,35 @@
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "common-adapters"
+version = "1.0.0"
+description = "Shared adapter library for AI agents"
+requires-python = ">=3.10"
+dependencies = [
+    # Existing
+    "tenacity>=8.2.0",
+    # AI adapters (Azure + AWS)
+    "openai>=1.0.0",
+    "boto3>=1.28.0",
+    "botocore>=1.31.0",
+    "numpy>=1.24.0",
+    # Storage adapter
+    "azure-storage-blob>=12.26.0",
+    # Database adapter
+    "pymongo>=4.15.0",
+    "certifi",
+    # Cache adapter
+    "redis>=4.5.0",
+    # Document extraction
+    "azure-ai-documentintelligence>=1.0.0",
+    "azure-core>=1.29.0",
+    # LightRAG Neptune adapter
+    "lightrag-hku>=1.3.9",
+    "aiohttp>=3.8.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

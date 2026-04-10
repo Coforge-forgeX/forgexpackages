@@ -1,0 +1,18 @@
+Metadata-Version: 2.4
+Name: common-adapters
+Version: 1.0.0
+Summary: Shared adapter library for AI agents
+Requires-Python: >=3.10
+Requires-Dist: tenacity>=8.2.0
+Requires-Dist: openai>=1.0.0
+Requires-Dist: boto3>=1.28.0
+Requires-Dist: botocore>=1.31.0
+Requires-Dist: numpy>=1.24.0
+Requires-Dist: azure-storage-blob>=12.26.0
+Requires-Dist: pymongo>=4.15.0
+Requires-Dist: certifi
+Requires-Dist: redis>=4.5.0
+Requires-Dist: azure-ai-documentintelligence>=1.0.0
+Requires-Dist: azure-core>=1.29.0
+Requires-Dist: lightrag-hku>=1.3.9
+Requires-Dist: aiohttp>=3.8.0
