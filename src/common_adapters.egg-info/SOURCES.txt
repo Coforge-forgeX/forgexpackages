@@ -15,7 +15,6 @@ src/common_adapters/ado_tool_integration/azure_devops_graph.py
 src/common_adapters/ado_tool_integration/azure_devops_prompts.py
 src/common_adapters/ado_tool_integration/azure_devops_tools.py
 src/common_adapters/ado_tool_integration/azure_devops_update_config.py
-src/common_adapters/ado_tool_integration/setup.py
 src/common_adapters/ai/__init__.py
 src/common_adapters/ai/base.py
 src/common_adapters/ai/config.py
@@ -48,7 +47,6 @@ src/common_adapters/download_response/__init__.py
 src/common_adapters/download_response/download.py
 src/common_adapters/download_response/markdown2docx.py
 src/common_adapters/download_response/prompts.py
-src/common_adapters/download_response/setup.py
 src/common_adapters/lightrag/__init__.py
 src/common_adapters/lightrag/neptune/__init__.py
 src/common_adapters/lightrag/neptune/client.py
