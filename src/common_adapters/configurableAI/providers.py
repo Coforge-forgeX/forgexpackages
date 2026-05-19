@@ -1,0 +1,210 @@
+"""
+Provider registry and base provider interface.
+"""
+
+from abc import ABC, abstractmethod
+from typing import Dict, Type, Any, List, Optional
+import logging
+from .config import AIProviderConfig
+
+logger = logging.getLogger(__name__)
+
+
+class BaseAIProvider(ABC):
+    """Base class for AI providers."""
+    
+    def __init__(self, config: AIProviderConfig):
+        self.config = config
+        self.provider_name = config.provider_name
+    
+    @abstractmethod
+    async def generate_text(self, prompt: str, **kwargs) -> str:
+        """Generate text using the AI provider."""
+        pass
+    
+    @abstractmethod
+    async def generate_embeddings(self, texts: List[str], **kwargs) -> List[List[float]]:
+        """Generate embeddings using the AI provider."""
+        pass
+    
+    @abstractmethod
+    def validate_config(self) -> bool:
+        """Validate the provider configuration."""
+        pass
+
+
+class OpenAIProvider(BaseAIProvider):
+    """OpenAI provider implementation."""
+    
+    def __init__(self, config: AIProviderConfig):
+        super().__init__(config)
+        self._client = None
+        
+    def _get_client(self):
+        """Lazy initialization of OpenAI client."""
+        if self._client is None:
+            try:
+                import openai
+                self._client = openai.OpenAI(
+                    api_key=self.config.api_key,
+                    base_url=self.config.endpoint,
+                    organization=getattr(self.config, 'organization', None)
+                )
+            except ImportError:
+                raise ImportError("openai package is required for OpenAI provider")
+        return self._client
+    
+    async def generate_text(self, prompt: str, **kwargs) -> str:
+        """Generate text using OpenAI."""
+        client = self._get_client()
+        
+        response = await client.chat.completions.create(
+            model=self.config.model or "gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            **kwargs
+        )
+        
+        return response.choices[0].message.content
+    
+    async def generate_embeddings(self, texts: List[str], **kwargs) -> List[List[float]]:
+        """Generate embeddings using OpenAI."""
+        client = self._get_client()
+        
+        response = await client.embeddings.create(
+            model=kwargs.get('embedding_model', 'text-embedding-ada-002'),
+            input=texts
+        )
+        
+        return [data.embedding for data in response.data]
+    
+    def validate_config(self) -> bool:
+        """Validate OpenAI configuration."""
+        return bool(self.config.api_key)
+
+
+class GCPProvider(BaseAIProvider):
+    """Google Cloud Platform AI provider implementation."""
+    
+    def __init__(self, config: AIProviderConfig):
+        super().__init__(config)
+        self._client = None
+        
+    def _get_client(self):
+        """Lazy initialization of GCP client."""
+        if self._client is None:
+            try:
+                from google.cloud import aiplatform
+                aiplatform.init(
+                    project=getattr(self.config, 'project_id', None),
+                    location=getattr(self.config, 'location', 'us-central1')
+                )
+                self._client = aiplatform
+            except ImportError:
+                raise ImportError("google-cloud-aiplatform package is required for GCP provider")
+        return self._client
+    
+    async def generate_text(self, prompt: str, **kwargs) -> str:
+        """Generate text using GCP Vertex AI."""
+        client = self._get_client()
+        
+        # Implementation would depend on specific GCP AI service
+        # This is a placeholder implementation
+        logger.warning("GCP text generation not fully implemented")
+        return f"GCP response for: {prompt[:50]}..."
+    
+    async def generate_embeddings(self, texts: List[str], **kwargs) -> List[List[float]]:
+        """Generate embeddings using GCP."""
+        client = self._get_client()
+        
+        # Implementation would depend on specific GCP embedding service
+        # This is a placeholder implementation
+        logger.warning("GCP embeddings not fully implemented")
+        return [[0.0] * 768 for _ in texts]  # Placeholder
+    
+    def validate_config(self) -> bool:
+        """Validate GCP configuration."""
+        return bool(getattr(self.config, 'project_id', None))
+
+
+class AzureOpenAIProvider(BaseAIProvider):
+    """Azure OpenAI provider implementation."""
+    
+    def __init__(self, config: AIProviderConfig):
+        super().__init__(config)
+        self._client = None
+        
+    def _get_client(self):
+        """Lazy initialization of Azure OpenAI client."""
+        if self._client is None:
+            try:
+                from openai import AzureOpenAI
+                self._client = AzureOpenAI(
+                    api_key=self.config.api_key,
+                    azure_endpoint=self.config.endpoint,
+                    api_version=getattr(self.config, 'api_version', '2023-12-01-preview')
+                )
+            except ImportError:
+                raise ImportError("openai package is required for Azure OpenAI provider")
+        return self._client
+    
+    async def generate_text(self, prompt: str, **kwargs) -> str:
+        """Generate text using Azure OpenAI."""
+        client = self._get_client()
+        
+        response = await client.chat.completions.create(
+            model=getattr(self.config, 'deployment_name', self.config.model),
+            messages=[{"role": "user", "content": prompt}],
+            **kwargs
+        )
+        
+        return response.choices[0].message.content
+    
+    async def generate_embeddings(self, texts: List[str], **kwargs) -> List[List[float]]:
+        """Generate embeddings using Azure OpenAI."""
+        client = self._get_client()
+        
+        response = await client.embeddings.create(
+            model=kwargs.get('embedding_deployment', 'text-embedding-ada-002'),
+            input=texts
+        )
+        
+        return [data.embedding for data in response.data]
+    
+    def validate_config(self) -> bool:
+        """Validate Azure OpenAI configuration."""
+        return bool(self.config.api_key and self.config.endpoint)
+
+
+class ProviderRegistry:
+    """Registry for AI providers."""
+    
+    _providers: Dict[str, Type[BaseAIProvider]] = {
+        "openai": OpenAIProvider,
+        "gcp": GCPProvider,
+        "azure": AzureOpenAIProvider,
+    }
+    
+    @classmethod
+    def register_provider(cls, name: str, provider_class: Type[BaseAIProvider]):
+        """Register a new AI provider."""
+        cls._providers[name.lower()] = provider_class
+        logger.info(f"Registered AI provider: {name}")
+    
+    @classmethod
+    def get_provider(cls, name: str) -> Type[BaseAIProvider]:
+        """Get a provider class by name."""
+        provider_class = cls._providers.get(name.lower())
+        if not provider_class:
+            available = list(cls._providers.keys())
+            raise ValueError(f"Provider '{name}' not found. Available providers: {available}")
+        return provider_class
+    
+    @classmethod
+    def list_providers(cls) -> List[str]:
+        """List all available providers."""
+        return list(cls._providers.keys())
+    
+    @classmethod
+    def is_provider_available(cls, name: str) -> bool:
+        """Check if a provider is available."""
+        return name.lower() in cls._providers
