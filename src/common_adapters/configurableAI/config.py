@@ -90,13 +90,12 @@ class AzureOpenAIConfig(AIProviderConfig):
     @classmethod
     def from_env(cls) -> "AzureOpenAIConfig":
         """Create Azure OpenAI configuration from environment variables."""
-        base_config = super().from_env("azure")
         return cls(
             provider_name="azure",
-            api_key=base_config.api_key,
-            endpoint=base_config.endpoint,
-            model=base_config.model,
-            deployment_name=os.getenv("AZURE_DEPLOYMENT_NAME"),
-            api_version=os.getenv("AZURE_API_VERSION", "2023-12-01-preview"),
-            extra_params=base_config.extra_params
+            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+            endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            model=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT"),
+            deployment_name=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT"),
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2023-12-01-preview"),
+            extra_params={}
         )

@@ -1,4 +1,3 @@
-README.md
 pyproject.toml
 src/common_adapters/__init__.py
 src/common_adapters/exceptions.py
@@ -30,6 +29,14 @@ src/common_adapters/cache/base_cache.py
 src/common_adapters/cache/cache_factory.py
 src/common_adapters/cache/config.py
 src/common_adapters/cache/redis_cache.py
+src/common_adapters/configurableAI/__init__.py
+src/common_adapters/configurableAI/config.py
+src/common_adapters/configurableAI/examples.py
+src/common_adapters/configurableAI/manager.py
+src/common_adapters/configurableAI/providers.py
+src/common_adapters/configurableAI/setup.py
+src/common_adapters/configurableAI/tests/__init__.py
+src/common_adapters/configurableAI/tests/test_manager.py
 src/common_adapters/database/__init__.py
 src/common_adapters/database/base.py
 src/common_adapters/database/config.py
