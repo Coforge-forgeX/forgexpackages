@@ -151,7 +151,8 @@ class AzureOpenAIProvider(BaseAIProvider):
         """Generate text using Azure OpenAI."""
         client = self._get_client()
         
-        response = await client.chat.completions.create(
+        # Azure OpenAI client is synchronous, not async
+        response = client.chat.completions.create(
             model=getattr(self.config, 'deployment_name', self.config.model),
             messages=[{"role": "user", "content": prompt}],
             **kwargs
@@ -163,7 +164,8 @@ class AzureOpenAIProvider(BaseAIProvider):
         """Generate embeddings using Azure OpenAI."""
         client = self._get_client()
         
-        response = await client.embeddings.create(
+        # Azure OpenAI client is synchronous, not async
+        response = client.embeddings.create(
             model=kwargs.get('embedding_deployment', 'text-embedding-ada-002'),
             input=texts
         )
