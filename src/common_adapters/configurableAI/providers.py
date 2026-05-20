@@ -149,28 +149,40 @@ class AzureOpenAIProvider(BaseAIProvider):
     
     async def generate_text(self, prompt: str, **kwargs) -> str:
         """Generate text using Azure OpenAI."""
-        client = self._get_client()
+        import asyncio
         
-        # Azure OpenAI client is synchronous, not async
-        response = client.chat.completions.create(
-            model=getattr(self.config, 'deployment_name', self.config.model),
-            messages=[{"role": "user", "content": prompt}],
-            **kwargs
-        )
+        def _sync_generate():
+            client = self._get_client()
+            
+            # Azure OpenAI client is synchronous, not async
+            response = client.chat.completions.create(
+                model=getattr(self.config, 'deployment_name', self.config.model),
+                messages=[{"role": "user", "content": prompt}],
+                **kwargs
+            )
+            
+            return response.choices[0].message.content
         
-        return response.choices[0].message.content
+        # Run the synchronous call in a thread pool to make it async-compatible
+        return await asyncio.get_event_loop().run_in_executor(None, _sync_generate)
     
     async def generate_embeddings(self, texts: List[str], **kwargs) -> List[List[float]]:
         """Generate embeddings using Azure OpenAI."""
-        client = self._get_client()
+        import asyncio
         
-        # Azure OpenAI client is synchronous, not async
-        response = client.embeddings.create(
-            model=kwargs.get('embedding_deployment', 'text-embedding-ada-002'),
-            input=texts
-        )
+        def _sync_generate_embeddings():
+            client = self._get_client()
+            
+            # Azure OpenAI client is synchronous, not async
+            response = client.embeddings.create(
+                model=kwargs.get('embedding_deployment', 'text-embedding-ada-002'),
+                input=texts
+            )
+            
+            return [data.embedding for data in response.data]
         
-        return [data.embedding for data in response.data]
+        # Run the synchronous call in a thread pool to make it async-compatible
+        return await asyncio.get_event_loop().run_in_executor(None, _sync_generate_embeddings)
     
     def validate_config(self) -> bool:
         """Validate Azure OpenAI configuration."""
