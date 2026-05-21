@@ -3,6 +3,7 @@ from typing import List, Dict, Optional
 from pathlib import Path
 import logging
 import os
+from datetime import datetime
 from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
 from azure.core.credentials import AzureKeyCredential
@@ -97,8 +98,73 @@ class SharePointService:
         except Exception as e:
             logger.error(f"Error getting file metadata: {str(e)}")
             return None
+     # ---------------------- UNIFIED FILTER (METADATA + FILTERS) ----------------------
+    def _should_process_file(self, file_item: Dict, metadata_map: Optional[Dict]) -> bool:
+        """
+        Only metadata-based filtering (global conditions like SharePoint metadata)
+        """
 
-    def extract_data(self, folder_path: str = "") -> List[Dict]:
+        if not metadata_map:
+            return True
+
+
+        file_name = file_item.get('name', '')
+        file_size = file_item.get('size', 0)
+        extension = Path(file_name).suffix.lower()
+        created = file_item.get('createdDateTime')
+        modified = file_item.get('lastModifiedDateTime')
+        # ✅ FILE TYPES (multiple allowed)
+        if metadata_map.get("file_types"):
+            if extension not in metadata_map["file_types"]:
+                return False
+        # ✅ NAME FILTER
+        if metadata_map.get("name_contains"):
+            if metadata_map["name_contains"].lower() not in file_name.lower():
+                return False
+        # ✅ SIZE FILTER
+        if metadata_map.get("min_size"):
+            if file_size < metadata_map["min_size"]:
+                return False
+
+
+        if metadata_map.get("max_size"):
+            if file_size > metadata_map["max_size"]:
+                return False
+
+
+        # ✅ CREATED DATE FILTER
+        if created:
+            created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+
+
+            if metadata_map.get("created_after"):
+                if created_dt < metadata_map["created_after"]:
+                    return False
+
+
+            if metadata_map.get("created_before"):
+                if created_dt > metadata_map["created_before"]:
+                    return False
+
+
+        # ✅ MODIFIED DATE FILTER
+        if modified:
+            modified_dt = datetime.fromisoformat(modified.replace("Z", "+00:00"))
+
+
+            if metadata_map.get("modified_after"):
+                if modified_dt < metadata_map["modified_after"]:
+                    return False
+
+
+            if metadata_map.get("modified_before"):
+                if modified_dt > metadata_map["modified_before"]:
+                    return False
+
+
+        return True
+
+    def extract_data(self, folder_path: str = "", metadata_map: Optional[Dict[str, Dict]] = None,):
         if not self.client.site_id:
             self.client.get_site_id()
         documents = []
@@ -108,6 +174,10 @@ class SharePointService:
             try:
                 file_id = file_item.get('id')
                 file_name = file_item.get('name')
+                # ✅ UNIFIED CHECK
+                if metadata_map and not self._should_process_file(file_item, metadata_map):
+                    logger.info(f"Skipped: {file_name}")
+                    continue
                 content = self.download_file(file_id)
                 if not content:
                     logger.warning(f"Could not download {file_name}")
