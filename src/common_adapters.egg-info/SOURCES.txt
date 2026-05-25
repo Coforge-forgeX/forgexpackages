@@ -35,8 +35,6 @@ src/common_adapters/configurableAI/examples.py
 src/common_adapters/configurableAI/manager.py
 src/common_adapters/configurableAI/providers.py
 src/common_adapters/configurableAI/setup.py
-src/common_adapters/configurableAI/tests/__init__.py
-src/common_adapters/configurableAI/tests/test_manager.py
 src/common_adapters/database/__init__.py
 src/common_adapters/database/base.py
 src/common_adapters/database/config.py
