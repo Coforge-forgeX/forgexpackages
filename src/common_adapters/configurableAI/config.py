@@ -92,11 +92,11 @@ class AzureOpenAIConfig(AIProviderConfig):
         """Create Azure OpenAI configuration from environment variables."""
         return cls(
             provider_name="azure",
-            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-            endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            model=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT"),
-            deployment_name=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT"),
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2023-12-01-preview"),
+            api_key=os.getenv("AZURE_OPENAI_LLM_MODEL_API_KEY"),
+            endpoint=os.getenv("AZURE_OPENAI_LLM_MODEL_API_BASE"),
+            model=os.getenv("AZURE_OPENAI_LLM_MODEL_LLM_MODEL"),
+            deployment_name=os.getenv("AZURE_OPENAI_LLM_MODEL_LLM_MODEL"),
+            api_version=os.getenv("AZURE_OPENAI_LLM_MODEL_API_VERSION", "2023-12-01-preview"),
             extra_params={}
         )
 
