@@ -23,11 +23,24 @@ class SummarizeOldMessagesStrategy:
             f"{m.get('role', 'user')}: {m.get('content', '')}" for m in old_msgs 
         ) 
         summary = llm.invoke( 
-            sys_prompt=( 
-                "Summarize the older conversation context into a compact but complete memory. " 
-                "Preserve requirements, decisions, constraints, unresolved questions, and referenced entities." 
-            ), 
-            input=summary_input 
+                sys_prompt=(
+                    "You are a context compression assistant.\n\n"
+                    "Your task is to reduce the conversation into a compact memory while preserving all important information.\n\n"
+                    "RULES:\n"
+                    "- Keep all important details (requirements, decisions, constraints, issues)\n"
+                    "- Do NOT remove critical technical or business information\n"
+                    "- Remove repetition, filler text, and unnecessary conversation parts\n"
+                    "- Keep it concise and easy to read (avoid too much expansion)\n\n"
+                    "OUTPUT FORMAT:\n"
+                    "- Requirements:\n"
+                    "- Decisions:\n"
+                    "- Issues / Constraints:\n"
+                    "- Pending Tasks / Questions:\n"
+                    "- Key Entities:\n\n"
+                    "Write short bullet points (1 line each). "
+                    "Do NOT make it verbose. Keep it compact but complete."
+                ),
+                input=summary_input 
         ) 
         return [ 
             { 
