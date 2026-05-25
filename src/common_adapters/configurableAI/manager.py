@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional, List, Union
 import logging
 import os
 import json
+import asyncio
 from .providers import ProviderRegistry, BaseAIProvider
 from .config import (
     AIProviderConfig, 
@@ -138,9 +139,48 @@ class ConfigurableAIManager:
         """List all available provider types."""
         return ProviderRegistry.list_providers()
     
-    async def generate_text(self, prompt: str, provider: Optional[str] = None, **kwargs) -> str:
+    def generate_text(self, prompt: str, provider: Optional[str] = None, **kwargs) -> str:
         """
-        Generate text using the specified or current provider.
+        Generate text using the specified or current provider (synchronous).
+        
+        Args:
+            prompt: Text prompt for generation
+            provider: Specific provider to use (optional, uses current if not specified)
+            **kwargs: Additional parameters for the provider
+            
+        Returns:
+            Generated text
+        """
+        try:
+            # Try to get existing event loop
+            loop = asyncio.get_running_loop()
+            # If we're in an event loop, we need to use a different approach
+            import concurrent.futures
+            import threading
+            
+            def run_in_thread():
+                # Create a new event loop in a separate thread
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    return new_loop.run_until_complete(
+                        self.generate_text_async(prompt, provider, **kwargs)
+                    )
+                finally:
+                    new_loop.close()
+            
+            # Run in a separate thread to avoid event loop conflict
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(run_in_thread)
+                return future.result()
+                
+        except RuntimeError:
+            # No event loop running, safe to use asyncio.run()
+            return asyncio.run(self.generate_text_async(prompt, provider, **kwargs))
+    
+    async def generate_text_async(self, prompt: str, provider: Optional[str] = None, **kwargs) -> str:
+        """
+        Generate text using the specified or current provider (asynchronous).
         
         Args:
             prompt: Text prompt for generation
@@ -161,9 +201,48 @@ class ConfigurableAIManager:
         logger.info(f"Generating text using provider: {provider_name}")
         return await self._providers[provider_name].generate_text(prompt, **kwargs)
     
-    async def generate_embeddings(self, texts: List[str], provider: Optional[str] = None, **kwargs) -> List[List[float]]:
+    def generate_embeddings(self, texts: List[str], provider: Optional[str] = None, **kwargs) -> List[List[float]]:
         """
-        Generate embeddings using the specified or current provider.
+        Generate embeddings using the specified or current provider (synchronous).
+        
+        Args:
+            texts: List of texts to generate embeddings for
+            provider: Specific provider to use (optional, uses current if not specified)
+            **kwargs: Additional parameters for the provider
+            
+        Returns:
+            List of embeddings
+        """
+        try:
+            # Try to get existing event loop
+            loop = asyncio.get_running_loop()
+            # If we're in an event loop, we need to use a different approach
+            import concurrent.futures
+            import threading
+            
+            def run_in_thread():
+                # Create a new event loop in a separate thread
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    return new_loop.run_until_complete(
+                        self.generate_embeddings_async(texts, provider, **kwargs)
+                    )
+                finally:
+                    new_loop.close()
+            
+            # Run in a separate thread to avoid event loop conflict
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(run_in_thread)
+                return future.result()
+                
+        except RuntimeError:
+            # No event loop running, safe to use asyncio.run()
+            return asyncio.run(self.generate_embeddings_async(texts, provider, **kwargs))
+    
+    async def generate_embeddings_async(self, texts: List[str], provider: Optional[str] = None, **kwargs) -> List[List[float]]:
+        """
+        Generate embeddings using the specified or current provider (asynchronous).
         
         Args:
             texts: List of texts to generate embeddings for
