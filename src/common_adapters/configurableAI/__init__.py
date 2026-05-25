@@ -1,16 +1,30 @@
 """
-ConfigurableAI - A common package for switching between AI providers.
+ConfigurableAI - A unified interface for multiple AI providers.
 
-This package provides a unified interface to switch between different AI providers
-like OpenAI, GCP, Azure, AWS, etc. based on configuration.
+This package provides a simple way to switch between different AI providers
+(OpenAI, Azure OpenAI, GCP Vertex AI, etc.) with minimal code changes.
 """
 
-from .manager import ConfigurableAIManager
-from .providers import ProviderRegistry
-from .config import AIProviderConfig
+from .manager import ConfigurableAIManager, get_ai_manager
+from .config import (
+    AIProviderConfig,
+    OpenAIConfig,
+    AzureOpenAIConfig,
+    GCPConfig,
+    QuasarConfig
+)
+from .providers import BaseAIProvider, ProviderRegistry
+
+__version__ = "0.1.0"
 
 __all__ = [
     "ConfigurableAIManager",
-    "ProviderRegistry", 
-    "AIProviderConfig"
+    "get_ai_manager",
+    "AIProviderConfig",
+    "OpenAIConfig", 
+    "AzureOpenAIConfig",
+    "GCPConfig",
+    "QuasarConfig",
+    "BaseAIProvider",
+    "ProviderRegistry"
 ]
