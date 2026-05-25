@@ -5,7 +5,6 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REQUEST_TIMEOUT = 30
 
 
 class SharePointClient:
@@ -48,7 +47,7 @@ class SharePointClient:
             return None
         try:
             site_url = f"https://graph.microsoft.com/v1.0/sites/{self.site_hostname}:{self.site_path}"
-            response = requests.get(site_url, headers=self.get_headers(), timeout=DEFAULT_REQUEST_TIMEOUT)
+            response = requests.get(site_url, headers=self.get_headers())
             response.raise_for_status()
             site_data = response.json()
             self.site_id = site_data.get("id")

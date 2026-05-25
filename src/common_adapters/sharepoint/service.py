@@ -51,13 +51,25 @@ class SharePointService:
             self.client.get_site_id()
         return bool(self.client.site_id)
 
+    @staticmethod
+    def _strip_library_prefix(folder_path: str) -> str:
+        """Graph drive/root already maps to 'Shared Documents'.
+        Strip that prefix so callers can pass the full SharePoint path without 404."""
+        stripped = folder_path.strip("/")
+        for prefix in ("Shared Documents", "Shared%20Documents"):
+            if stripped.lower() == prefix.lower():
+                return ""
+            if stripped.lower().startswith(prefix.lower() + "/"):
+                return stripped[len(prefix) + 1:]
+        return stripped
+
     def _children_url(self, folder_path: str) -> str:
         site_id = self.client.site_id
-        if not folder_path:
-            return f"{GRAPH_BASE}/sites/{site_id}/drive/root/children"
-        # Graph requires a leading '/' inside the colon-delimited path expression.
-        normalized = folder_path if folder_path.startswith("/") else f"/{folder_path}"
-        return f"{GRAPH_BASE}/sites/{site_id}/drive/root:{normalized}:/children"
+        cleaned = self._strip_library_prefix(folder_path)
+        if not cleaned:
+            return f"{GRAPH_BASE}/sites/{site_id}/drive/root/children?$expand=listItem($expand=fields)"
+        normalized = f"/{cleaned}"
+        return f"{GRAPH_BASE}/sites/{site_id}/drive/root:{normalized}:/children?$expand=listItem($expand=fields)"
 
     def _get_all_files_recursive(self, folder_path: str = "") -> List[Dict]:
         """Walk a folder tree and return every file item, following Graph pagination."""
@@ -65,7 +77,9 @@ class SharePointService:
         if not self._ensure_site():
             return all_files
 
-        url: Optional[str] = self._children_url(folder_path)
+        # Normalise once at entry so sub-paths are already clean
+        clean_path = self._strip_library_prefix(folder_path)
+        url: Optional[str] = self._children_url(clean_path)
         try:
             while url:
                 response = requests.get(url, headers=self.client.get_headers())
@@ -73,7 +87,7 @@ class SharePointService:
                 payload = response.json()
                 for item in payload.get("value", []):
                     if "folder" in item:
-                        sub = f"{folder_path}/{item['name']}" if folder_path else item["name"]
+                        sub = f"{clean_path}/{item['name']}" if clean_path else item["name"]
                         all_files.extend(self._get_all_files_recursive(sub))
                     elif "file" in item:
                         all_files.append(item)
@@ -143,6 +157,7 @@ class SharePointService:
           - min_size / max_size: int       (bytes)
           - created_after / created_before: datetime | iso str
           - modified_after / modified_before: datetime | iso str
+          - tags: dict[str, Any]           (SharePoint column key → expected value; all must match)
         """
         if not metadata_map:
             return True
@@ -191,6 +206,18 @@ class SharePointService:
                 if before and modified_dt > before:
                     return False
 
+        tags_filter = metadata_map.get("tags")
+        if tags_filter:
+            fields = (file_item.get("listItem") or {}).get("fields") or {}
+            for col_key, expected in tags_filter.items():
+                actual = fields.get(col_key)
+                if isinstance(expected, list):
+                    if actual not in expected:
+                        return False
+                else:
+                    if str(actual).lower() != str(expected).lower():
+                        return False
+
         return True
 
     # ---------------------- EXTRACTION ----------------------
@@ -223,6 +250,7 @@ class SharePointService:
                 extension = Path(file_name).suffix.lower()
                 text = self.get_data_from_file(content)
 
+                sp_fields = (file_item.get("listItem") or {}).get("fields") or {}
                 documents.append({
                     "id": file_id,
                     "name": file_name,
@@ -237,6 +265,7 @@ class SharePointService:
                         "url": file_item.get("webUrl", ""),
                         "sharepoint_id": file_id,
                         "mime_type": file_item.get("file", {}).get("mimeType", ""),
+                        "tags": sp_fields,
                     },
                 })
                 logger.info(f"Processed: {file_name}")
