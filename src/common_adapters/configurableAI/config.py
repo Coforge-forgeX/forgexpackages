@@ -99,3 +99,19 @@ class AzureOpenAIConfig(AIProviderConfig):
             api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2023-12-01-preview"),
             extra_params={}
         )
+
+
+@dataclass
+class QuasarConfig(AIProviderConfig):
+    """Quasar API configuration."""
+    
+    @classmethod
+    def from_env(cls) -> "QuasarConfig":
+        """Create Quasar configuration from environment variables."""
+        return cls(
+            provider_name="quasar",
+            api_key=os.getenv("QUASAR_API_KEY"),
+            endpoint=os.getenv("QUASAR_ENDPOINT_URL"),
+            model=os.getenv("QUASAR_MODEL", "claude-sonnet-4"),
+            extra_params={}
+        )

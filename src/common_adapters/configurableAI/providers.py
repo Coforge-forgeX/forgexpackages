@@ -189,6 +189,57 @@ class AzureOpenAIProvider(BaseAIProvider):
         return bool(self.config.api_key and self.config.endpoint)
 
 
+class QuasarProvider(BaseAIProvider):
+    """Quasar API provider implementation."""
+    
+    def __init__(self, config: AIProviderConfig):
+        super().__init__(config)
+        self._client = None
+        
+    def _get_client(self):
+        """Lazy initialization of HTTP client for Quasar API."""
+        if self._client is None:
+            try:
+                import httpx
+                self._client = httpx.AsyncClient(
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-API-KEY": self.config.api_key
+                    },
+                    timeout=60.0
+                )
+            except ImportError:
+                raise ImportError("httpx package is required for Quasar provider")
+        return self._client
+    
+    async def generate_text(self, prompt: str, **kwargs) -> str:
+        """Generate text using Quasar API."""
+        client = self._get_client()
+        
+        payload = {
+            "model": self.config.model or "claude-sonnet-4",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": kwargs.get("temperature", 0.7),
+            "max_tokens": kwargs.get("max_tokens", 100)
+        }
+        
+        response = await client.post(self.config.endpoint, json=payload)
+        response.raise_for_status()
+        
+        data = response.json()
+        return data['choices'][0]['message']['content']
+    
+    async def generate_embeddings(self, texts: List[str], **kwargs) -> List[List[float]]:
+        """Generate embeddings using Quasar API."""
+        # Quasar might not support embeddings, return placeholder
+        logger.warning("Quasar embeddings not implemented")
+        return [[0.0] * 768 for _ in texts]  # Placeholder
+    
+    def validate_config(self) -> bool:
+        """Validate Quasar configuration."""
+        return bool(self.config.api_key and self.config.endpoint)
+
+
 class ProviderRegistry:
     """Registry for AI providers."""
     
@@ -196,6 +247,7 @@ class ProviderRegistry:
         "openai": OpenAIProvider,
         "gcp": GCPProvider,
         "azure": AzureOpenAIProvider,
+        "quasar": QuasarProvider,
     }
     
     @classmethod

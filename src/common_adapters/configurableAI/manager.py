@@ -11,7 +11,8 @@ from .config import (
     AIProviderConfig, 
     OpenAIConfig, 
     GCPConfig, 
-    AzureOpenAIConfig
+    AzureOpenAIConfig,
+    QuasarConfig
 )
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,8 @@ class ConfigurableAIManager:
             config = GCPConfig.from_env()
         elif provider_name == "azure":
             config = AzureOpenAIConfig.from_env()
+        elif provider_name == "quasar":
+            config = QuasarConfig.from_env()
         else:
             config = AIProviderConfig.from_env(provider_name)
         
@@ -191,6 +194,8 @@ class ConfigurableAIManager:
             return GCPConfig(**config_dict)
         elif provider_name == "azure":
             return AzureOpenAIConfig(**config_dict)
+        elif provider_name == "quasar":
+            return QuasarConfig(**config_dict)
         else:
             return AIProviderConfig.from_dict(config_dict)
 
