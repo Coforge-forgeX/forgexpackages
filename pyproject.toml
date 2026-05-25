@@ -43,6 +43,7 @@ dependencies = [
 
     "langfuse>=2.0.0",
     "langchain-core>=0.1.0",
+    "msal>=1.36.0",
 ]
 
 [tool.setuptools.packages.find]
