@@ -11,7 +11,6 @@ from azure.core.credentials import AzureKeyCredential
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REQUEST_TIMEOUT = 60
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 
@@ -69,7 +68,7 @@ class SharePointService:
         url: Optional[str] = self._children_url(folder_path)
         try:
             while url:
-                response = requests.get(url, headers=self.client.get_headers(), timeout=DEFAULT_REQUEST_TIMEOUT)
+                response = requests.get(url, headers=self.client.get_headers())
                 response.raise_for_status()
                 payload = response.json()
                 for item in payload.get("value", []):
