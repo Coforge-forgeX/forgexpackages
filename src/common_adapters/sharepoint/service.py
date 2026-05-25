@@ -90,13 +90,13 @@ class SharePointService:
             return None
         try:
             file_url = f"{GRAPH_BASE}/sites/{self.client.site_id}/drive/items/{file_id}"
-            response = requests.get(file_url, headers=self.client.get_headers(), timeout=DEFAULT_REQUEST_TIMEOUT)
+            response = requests.get(file_url, headers=self.client.get_headers())
             response.raise_for_status()
             download_url = response.json().get("@microsoft.graph.downloadUrl")
             if not download_url:
                 logger.error(f"No download URL for file ID: {file_id}")
                 return None
-            blob = requests.get(download_url, timeout=DEFAULT_REQUEST_TIMEOUT)
+            blob = requests.get(download_url)
             blob.raise_for_status()
             logger.info(f"Downloaded file ID {file_id} ({len(blob.content)} bytes)")
             return blob.content
@@ -109,7 +109,7 @@ class SharePointService:
             return None
         try:
             file_url = f"{GRAPH_BASE}/sites/{self.client.site_id}/drive/items/{file_id}"
-            response = requests.get(file_url, headers=self.client.get_headers(), timeout=DEFAULT_REQUEST_TIMEOUT)
+            response = requests.get(file_url, headers=self.client.get_headers())
             response.raise_for_status()
             return response.json()
         except Exception as e:
