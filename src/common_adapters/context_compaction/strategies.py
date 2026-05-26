@@ -37,7 +37,7 @@ class SummarizeOldMessagesStrategy:
                     "- Issues / Constraints:\n"
                     "- Pending Tasks / Questions:\n"
                     "- Key Entities:\n\n"
-                    "Write short bullet points (1 line each). "
+                    "Write short bullet points (2 line each). "
                     "Do NOT make it verbose. Keep it compact but complete."
                 ),
                 input=summary_input 
