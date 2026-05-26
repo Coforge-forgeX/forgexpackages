@@ -224,15 +224,19 @@ class SharePointService:
                 actual = fields_lower.get(col_key.lower())
                 if actual is None:
                     return False
+                def norm(val):
+                    if isinstance(val, (int, float)):
+                        return str(val)
+                    return str(val).lower()
                 if isinstance(expected, list):
-                    # Case-insensitive any-of match
-                    actual_lower = str(actual).lower()
-                    expected_lowers = [str(e).lower() for e in expected]
-                    if actual_lower not in expected_lowers:
+                    # Case-insensitive, type-insensitive any-of match
+                    actual_norm = norm(actual)
+                    expected_norms = [norm(e) for e in expected]
+                    if actual_norm not in expected_norms:
                         return False
                 else:
-                    # Case-insensitive exact match
-                    if str(actual).lower() != str(expected).lower():
+                    # Case-insensitive, type-insensitive exact match
+                    if norm(actual) != norm(expected):
                         return False
 
         return True
