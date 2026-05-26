@@ -8,7 +8,7 @@ import requests
 from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
 from azure.core.credentials import AzureKeyCredential
-
+import concurrent.futures
 logger = logging.getLogger(__name__)
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
@@ -234,8 +234,11 @@ class SharePointService:
         self,
         folder_path: str = "",
         metadata_map: Optional[Dict] = None,
+        max_workers: int = 5,
     ) -> List[Dict]:
-        """List files under folder_path, apply metadata filter, download, and OCR each match."""
+        """List files under folder_path, apply metadata filter, download, and OCR each match (parallelized)."""
+       
+
         if not self._ensure_site():
             logger.error("SharePoint site not ensured. Aborting extract_data.")
             return []
@@ -243,47 +246,53 @@ class SharePointService:
         documents: List[Dict] = []
         files = self._get_all_files_recursive(folder_path)
         logger.info(f"Found {len(files)} files under '{folder_path or '/'}'")
+
+        def process_file(file_item):
+            file_id = file_item.get("id")
+            file_name = file_item.get("name")
+            try:
+                if metadata_map and not self._should_process_file(file_item, metadata_map):
+                    logger.info(f"Skipped (metadata filter): {file_name}")
+                    return None
+
+                logger.debug(f"Attempting to download file: {file_name} (id={file_id})")
+                content = self.download_file(file_id)
+                if not content:
+                    logger.warning(f"Could not download {file_name}")
+                    return None
+
+                extension = Path(file_name).suffix.lower()
+                text = self.get_data_from_file(content)
+
+                sp_fields = (file_item.get("listItem") or {}).get("fields") or {}
+                doc = {
+                    "id": file_id,
+                    "name": file_name,
+                    "content": text,
+                    "metadata": {
+                        "source": f"sharepoint://{self.client.site_hostname}{self.client.site_path}/{file_name}",
+                        "file_type": extension,
+                        "size": file_item.get("size", 0),
+                        "created_at": file_item.get("createdDateTime", ""),
+                        "modified_at": file_item.get("lastModifiedDateTime", ""),
+                        "url": file_item.get("webUrl", ""),
+                        "sharepoint_id": file_id,
+                        "mime_type": file_item.get("file", {}).get("mimeType", ""),
+                        "tags": sp_fields,
+                    },
+                }
+                logger.info(f"Processed: {file_name}")
+                return doc
+            except Exception as e:
+                logger.error(f"Error processing {file_name}: {e}", exc_info=True)
+                return None
+
         try:
-            for file_item in files:
-                file_id = file_item.get("id")
-                file_name = file_item.get("name")
-                try:
-                    if metadata_map and not self._should_process_file(file_item, metadata_map):
-                        logger.info(f"Skipped (metadata filter): {file_name}")
-                        continue
-
-                    logger.debug(f"Attempting to download file: {file_name} (id={file_id})")
-                    content = self.download_file(file_id)
-                    if not content:
-                        logger.warning(f"Could not download {file_name}")
-                        continue
-
-                    extension = Path(file_name).suffix.lower()
-                    text = self.get_data_from_file(content)
-
-                    sp_fields = (file_item.get("listItem") or {}).get("fields") or {}
-                    documents.append({
-                        "id": file_id,
-                        "name": file_name,
-                        "content": text,
-                        "metadata": {
-                            "source": f"sharepoint://{self.client.site_hostname}{self.client.site_path}/{file_name}",
-                            "file_type": extension,
-                            "size": file_item.get("size", 0),
-                            "created_at": file_item.get("createdDateTime", ""),
-                            "modified_at": file_item.get("lastModifiedDateTime", ""),
-                            "url": file_item.get("webUrl", ""),
-                            "sharepoint_id": file_id,
-                            "mime_type": file_item.get("file", {}).get("mimeType", ""),
-                            "tags": sp_fields,
-                        },
-                    })
-                    logger.info(f"Processed: {file_name}")
-                except Exception as e:
-                    logger.error(f"Error processing {file_name}: {e}", exc_info=True)
-                    continue
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                results = list(executor.map(process_file, files))
+            documents = [doc for doc in results if doc is not None]
         except Exception as e:
-            return {"error": f"Unexpected error in extract_data: {e}"}
+            logger.error(f"Unexpected error in extract_data: {e}", exc_info=True)
 
         logger.info(f"Successfully processed {len(documents)} documents out of {len(files)} files")
         return documents
