@@ -137,25 +137,25 @@ class SharePointService:
         return ext if ext.startswith(".") else f".{ext}"
 
     @staticmethod
-        def _parse_date(value: Union[str, datetime, None]) -> Optional[datetime]:
-            """
-            Parse a date string or datetime object and ensure it is timezone-aware (UTC).
-            """
-            if value is None:
+    def _parse_date(value: Union[str, datetime, None]) -> Optional[datetime]:
+        """
+        Parse a date string or datetime object and ensure it is timezone-aware (UTC).
+        """
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            try:
+                dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except Exception:
+                logger.warning(f"Could not parse date value: {value}")
                 return None
-            if isinstance(value, datetime):
-                dt = value
-            else:
-                try:
-                    dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-                except Exception:
-                    logger.warning(f"Could not parse date value: {value}")
-                    return None
-            # Make timezone-aware if naive
-            if dt.tzinfo is None:
-                from datetime import timezone
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt
+        # Make timezone-aware if naive
+        if dt.tzinfo is None:
+            from datetime import timezone
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
 
     def _should_process_file(self, file_item: Dict, metadata_map: Optional[Dict]) -> bool:
         """Return True if the file passes all configured metadata filters.
