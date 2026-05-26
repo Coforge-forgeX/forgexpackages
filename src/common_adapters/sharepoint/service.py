@@ -223,24 +223,29 @@ class SharePointService:
             def norm(val):
                 if isinstance(val, (int, float)):
                     return str(val)
-                return str(val).lower()
+                return str(val).strip().lower()
 
             for col_key, expected in tags_filter.items():
                 actual = fields_lower.get(col_key.lower())
                 if actual is None:
                     return False
 
-                # Normalize actual to list for uniform handling (supports multi-value SP columns)
-                actual_norms = [norm(a) for a in (actual if isinstance(actual, list) else [actual])]
-
-                if isinstance(expected, list):
-                    # Any of the expected values must appear in actual
-                    expected_norms = [norm(e) for e in expected]
-                    if not any(e in actual_norms for e in expected_norms):
+                if isinstance(actual, list) and isinstance(expected, list):
+                    # Both multi-value: any overlap passes
+                    actual_set = {norm(a) for a in actual}
+                    if not any(norm(e) in actual_set for e in expected):
+                        return False
+                elif isinstance(expected, list):
+                    # Filter is list, SP field is scalar: scalar must be one of expected
+                    if norm(actual) not in {norm(e) for e in expected}:
+                        return False
+                elif isinstance(actual, list):
+                    # Filter is scalar, SP field is multi-value: expected must exist in actual
+                    if norm(expected) not in {norm(a) for a in actual}:
                         return False
                 else:
-                    # Expected scalar must be present in actual (handles both single and multi-value)
-                    if norm(expected) not in actual_norms:
+                    # Both scalar: direct comparison
+                    if norm(actual) != norm(expected):
                         return False
 
         return True
