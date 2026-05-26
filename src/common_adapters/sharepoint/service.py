@@ -220,10 +220,16 @@ class SharePointService:
             fields = (file_item.get("listItem") or {}).get("fields") or {}
             for col_key, expected in tags_filter.items():
                 actual = fields.get(col_key)
+                if actual is None:
+                    return False
                 if isinstance(expected, list):
-                    if actual not in expected:
+                    # Case-insensitive any-of match
+                    actual_lower = str(actual).lower()
+                    expected_lowers = [str(e).lower() for e in expected]
+                    if actual_lower not in expected_lowers:
                         return False
                 else:
+                    # Case-insensitive exact match
                     if str(actual).lower() != str(expected).lower():
                         return False
 
