@@ -132,6 +132,35 @@ class SharePointService:
 
     # ---------------------- METADATA FILTER ----------------------
     @staticmethod
+    def _normalize_field_value(val) -> set:
+        """Convert any SharePoint field value to a flat set of lowercase strings.
+
+        Handles: plain list, list of taxonomy objects {"Label": ...},
+        semicolon-separated strings ("Val1;#Val2"), and scalars.
+        """
+        def _norm(v):
+            if isinstance(v, (int, float)):
+                return str(v)
+            return str(v).strip().lower()
+
+        if isinstance(val, list):
+            result = set()
+            for item in val:
+                if isinstance(item, dict):
+                    label = item.get("Label") or item.get("label") or item.get("Value") or str(item)
+                    result.add(_norm(label))
+                else:
+                    result.add(_norm(item))
+            return result
+
+        s = str(val).strip()
+        if ";" in s:
+            parts = [p.lstrip("#").strip() for p in s.split(";") if p.strip().lstrip("#")]
+            return {p.lower() for p in parts if p}
+
+        return {_norm(val)}
+
+    @staticmethod
     def _normalize_extension(ext: str) -> str:
         ext = ext.lower().strip()
         return ext if ext.startswith(".") else f".{ext}"
@@ -230,22 +259,13 @@ class SharePointService:
                 if actual is None:
                     return False
 
-                if isinstance(actual, list) and isinstance(expected, list):
-                    # Both multi-value: any overlap passes
-                    actual_set = {norm(a) for a in actual}
-                    if not any(norm(e) in actual_set for e in expected):
-                        return False
-                elif isinstance(expected, list):
-                    # Filter is list, SP field is scalar: scalar must be one of expected
-                    if norm(actual) not in {norm(e) for e in expected}:
-                        return False
-                elif isinstance(actual, list):
-                    # Filter is scalar, SP field is multi-value: expected must exist in actual
-                    if norm(expected) not in {norm(a) for a in actual}:
+                actual_vals = self._normalize_field_value(actual)
+
+                if isinstance(expected, list):
+                    if not any(norm(e) in actual_vals for e in expected):
                         return False
                 else:
-                    # Both scalar: direct comparison
-                    if norm(actual) != norm(expected):
+                    if norm(expected) not in actual_vals:
                         return False
 
         return True
