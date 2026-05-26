@@ -218,25 +218,29 @@ class SharePointService:
         tags_filter = metadata_map.get("tags")
         if tags_filter:
             fields = (file_item.get("listItem") or {}).get("fields") or {}
-            # Make field keys case-insensitive
             fields_lower = {k.lower(): v for k, v in fields.items()}
+
+            def norm(val):
+                if isinstance(val, (int, float)):
+                    return str(val)
+                return str(val).lower()
+
             for col_key, expected in tags_filter.items():
                 actual = fields_lower.get(col_key.lower())
                 if actual is None:
                     return False
-                def norm(val):
-                    if isinstance(val, (int, float)):
-                        return str(val)
-                    return str(val).lower()
+
+                # Normalize actual to list for uniform handling (supports multi-value SP columns)
+                actual_norms = [norm(a) for a in (actual if isinstance(actual, list) else [actual])]
+
                 if isinstance(expected, list):
-                    # Case-insensitive, type-insensitive any-of match
-                    actual_norm = norm(actual)
+                    # Any of the expected values must appear in actual
                     expected_norms = [norm(e) for e in expected]
-                    if actual_norm not in expected_norms:
+                    if not any(e in actual_norms for e in expected_norms):
                         return False
                 else:
-                    # Case-insensitive, type-insensitive exact match
-                    if norm(actual) != norm(expected):
+                    # Expected scalar must be present in actual (handles both single and multi-value)
+                    if norm(expected) not in actual_norms:
                         return False
 
         return True
