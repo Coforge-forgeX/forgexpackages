@@ -218,8 +218,10 @@ class SharePointService:
         tags_filter = metadata_map.get("tags")
         if tags_filter:
             fields = (file_item.get("listItem") or {}).get("fields") or {}
+            # Make field keys case-insensitive
+            fields_lower = {k.lower(): v for k, v in fields.items()}
             for col_key, expected in tags_filter.items():
-                actual = fields.get(col_key)
+                actual = fields_lower.get(col_key.lower())
                 if actual is None:
                     return False
                 if isinstance(expected, list):
