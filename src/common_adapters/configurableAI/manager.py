@@ -139,6 +139,23 @@ class ConfigurableAIManager:
         """List all available provider types."""
         return ProviderRegistry.list_providers()
     
+    def get_configuration_status(self) -> Dict[str, Any]:
+        """
+        Get the current configuration status.
+        
+        Returns:
+            Dictionary containing configuration status information
+        """
+        return {
+            "current_provider": self._current_provider,
+            "configured_providers": list(self._providers.keys()),
+            "available_providers": self.list_available_providers(),
+            "default_provider": self._default_provider,
+            "total_configured": len(self._providers),
+            "is_configured": len(self._providers) > 0,
+            "has_current_provider": self._current_provider is not None
+        }
+    
     def generate_text(self, prompt: str, provider: Optional[str] = None, **kwargs) -> str:
         """
         Generate text using the specified or current provider (synchronous).
