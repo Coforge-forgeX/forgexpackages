@@ -133,56 +133,33 @@ class SharePointService:
     # ---------------------- METADATA FILTER ----------------------
     @staticmethod
     def _normalize_field_value(val) -> set:
-        """Convert any SharePoint field value to a flat set of lowercase strings.
-
-        Handles:
-          - plain list or list of taxonomy/lookup dicts
-          - semicolon-separated strings ("Val1;#Val2", "L0|#guid|Val1;L0|#guid|Val2")
-          - term-path notation with pipe separator ("L0|#guid|Value")
-          - scalars
-        """
+        """Return a flat set of lowercase strings from any SharePoint field value."""
         def _norm(v):
             if isinstance(v, (int, float)):
                 return str(v)
             return str(v).strip().lower()
 
-        def _extract_term_path(s: str) -> str:
-            """Extract human-readable value from SharePoint term path 'L0|#guid|Value'."""
-            if "|" in s:
-                return s.split("|")[-1].strip()
-            return s
-
         if isinstance(val, list):
             result = set()
             for item in val:
                 if isinstance(item, dict):
-                    # Graph API taxonomy: "name"; lookup: "LookupValue"; classic: "Label"/"Value"
                     label = (
                         item.get("Label") or item.get("label") or
                         item.get("name") or item.get("Name") or
                         item.get("Value") or item.get("value") or
-                        item.get("LookupValue")
+                        item.get("LookupValue") or str(item)
                     )
-                    if label is not None:
-                        result.add(_norm(label))
-                    else:
-                        result.add(_norm(str(item)))
+                    result.add(_norm(label))
                 else:
-                    result.add(_norm(_extract_term_path(str(item))))
+                    result.add(_norm(item))
             return result
 
         s = str(val).strip()
         if ";" in s:
-            parts = []
-            for p in s.split(";"):
-                p = p.lstrip("#").strip()
-                p = _extract_term_path(p)
-                if p:
-                    parts.append(p.lower())
-            return set(parts)
+            parts = [p.lstrip("#").strip() for p in s.split(";") if p.strip().lstrip("#")]
+            return {p.lower() for p in parts if p}
 
-        # Single term-path value
-        return {_norm(_extract_term_path(s))}
+        return {_norm(val)}
 
     @staticmethod
     def _normalize_extension(ext: str) -> str:
