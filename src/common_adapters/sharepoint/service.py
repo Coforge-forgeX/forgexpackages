@@ -135,30 +135,54 @@ class SharePointService:
     def _normalize_field_value(val) -> set:
         """Convert any SharePoint field value to a flat set of lowercase strings.
 
-        Handles: plain list, list of taxonomy objects {"Label": ...},
-        semicolon-separated strings ("Val1;#Val2"), and scalars.
+        Handles:
+          - plain list or list of taxonomy/lookup dicts
+          - semicolon-separated strings ("Val1;#Val2", "L0|#guid|Val1;L0|#guid|Val2")
+          - term-path notation with pipe separator ("L0|#guid|Value")
+          - scalars
         """
         def _norm(v):
             if isinstance(v, (int, float)):
                 return str(v)
             return str(v).strip().lower()
 
+        def _extract_term_path(s: str) -> str:
+            """Extract human-readable value from SharePoint term path 'L0|#guid|Value'."""
+            if "|" in s:
+                return s.split("|")[-1].strip()
+            return s
+
         if isinstance(val, list):
             result = set()
             for item in val:
                 if isinstance(item, dict):
-                    label = item.get("Label") or item.get("label") or item.get("Value") or str(item)
-                    result.add(_norm(label))
+                    # Graph API taxonomy: "name"; lookup: "LookupValue"; classic: "Label"/"Value"
+                    label = (
+                        item.get("Label") or item.get("label") or
+                        item.get("name") or item.get("Name") or
+                        item.get("Value") or item.get("value") or
+                        item.get("LookupValue")
+                    )
+                    if label is not None:
+                        result.add(_norm(label))
+                    else:
+                        result.add(_norm(str(item)))
                 else:
-                    result.add(_norm(item))
+                    result.add(_norm(_extract_term_path(str(item))))
             return result
 
         s = str(val).strip()
         if ";" in s:
-            parts = [p.lstrip("#").strip() for p in s.split(";") if p.strip().lstrip("#")]
-            return {p.lower() for p in parts if p}
+            parts = []
+            for p in s.split(";"):
+                p = p.lstrip("#").strip()
+                p = _extract_term_path(p)
+                if p:
+                    parts.append(p.lower())
+            return set(parts)
 
-        return {_norm(val)}
+        # Single term-path value
+        return {_norm(_extract_term_path(s))}
 
     @staticmethod
     def _normalize_extension(ext: str) -> str:
@@ -257,6 +281,10 @@ class SharePointService:
             for col_key, expected in tags_filter.items():
                 actual = fields_lower.get(col_key.lower())
                 if actual is None:
+                    logger.warning(
+                        f"Tag filter key '{col_key}' not found in SharePoint fields. "
+                        f"Available keys: {list(fields.keys())}"
+                    )
                     return False
 
                 actual_vals = self._normalize_field_value(actual)
