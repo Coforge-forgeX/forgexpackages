@@ -90,13 +90,23 @@ class AzureOpenAIConfig(AIProviderConfig):
     @classmethod
     def from_env(cls) -> "AzureOpenAIConfig":
         """Create Azure OpenAI configuration from environment variables."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        api_key = os.getenv("AZURE_OPENAI_LLM_MODEL_API_KEY")
+        endpoint = os.getenv("AZURE_OPENAI_LLM_MODEL_API_BASE")
+        model = os.getenv("AZURE_OPENAI_LLM_MODEL_LLM_MODEL")
+        api_version = os.getenv("AZURE_OPENAI_LLM_MODEL_API_VERSION", "2023-12-01-preview")
+        
+        logger.info(f"Azure config from env - API Key: {'***' if api_key else 'None'}, Endpoint: {endpoint}, Model: {model}, Version: {api_version}")
+        
         return cls(
             provider_name="azure",
-            api_key=os.getenv("AZURE_OPENAI_LLM_MODEL_API_KEY"),
-            endpoint=os.getenv("AZURE_OPENAI_LLM_MODEL_API_BASE"),
-            model=os.getenv("AZURE_OPENAI_LLM_MODEL_LLM_MODEL"),
-            deployment_name=os.getenv("AZURE_OPENAI_LLM_MODEL_LLM_MODEL"),
-            api_version=os.getenv("AZURE_OPENAI_LLM_MODEL_API_VERSION", "2023-12-01-preview"),
+            api_key=api_key,
+            endpoint=endpoint,
+            model=model,
+            deployment_name=model,
+            api_version=api_version,
             extra_params={}
         )
 
@@ -108,10 +118,19 @@ class QuasarConfig(AIProviderConfig):
     @classmethod
     def from_env(cls) -> "QuasarConfig":
         """Create Quasar configuration from environment variables."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        api_key = os.getenv("QUASAR_API_KEY")
+        endpoint = os.getenv("QUASAR_ENDPOINT_URL")
+        model = os.getenv("QUASAR_MODEL", "claude-sonnet-4")
+        
+        logger.info(f"Quasar config from env - API Key: {'***' if api_key else 'None'}, Endpoint: {endpoint}, Model: {model}")
+        
         return cls(
             provider_name="quasar",
-            api_key=os.getenv("QUASAR_API_KEY"),
-            endpoint=os.getenv("QUASAR_ENDPOINT_URL"),
-            model=os.getenv("QUASAR_MODEL", "claude-sonnet-4"),
+            api_key=api_key,
+            endpoint=endpoint,
+            model=model,
             extra_params={}
         )

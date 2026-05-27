@@ -70,28 +70,55 @@ class ConfigurableAIManager:
         
         logger.info(f"Configured provider '{provider_name}' successfully")
     
-    def configure_from_env(self, provider_name: str) -> None:
+    def configure_from_env(self, provider_name: str) -> bool:
         """
         Configure a provider using environment variables.
         
         Args:
             provider_name: Name of the provider to configure
+            
+        Returns:
+            bool: True if configuration was successful, False otherwise
         """
         provider_name = provider_name.lower()
         
-        # Create config from environment
-        if provider_name == "openai":
-            config = OpenAIConfig.from_env()
-        elif provider_name == "gcp":
-            config = GCPConfig.from_env()
-        elif provider_name == "azure":
-            config = AzureOpenAIConfig.from_env()
-        elif provider_name == "quasar":
-            config = QuasarConfig.from_env()
-        else:
-            config = AIProviderConfig.from_env(provider_name)
-        
-        self.configure_provider(provider_name, config)
+        try:
+            # Create config from environment
+            if provider_name == "openai":
+                config = OpenAIConfig.from_env()
+            elif provider_name == "gcp":
+                config = GCPConfig.from_env()
+            elif provider_name == "azure":
+                config = AzureOpenAIConfig.from_env()
+            elif provider_name == "quasar":
+                config = QuasarConfig.from_env()
+            else:
+                config = AIProviderConfig.from_env(provider_name)
+            
+            logger.info(f"Created {provider_name} config: api_key={'***' if config.api_key else 'None'}, endpoint={config.endpoint}, model={config.model}")
+            
+            # Validate that required fields are present
+            if not config.api_key:
+                logger.error(f"Missing API key for {provider_name} provider")
+                return False
+            
+            if not config.endpoint:
+                logger.error(f"Missing endpoint for {provider_name} provider")
+                return False
+                
+            if not config.model:
+                logger.error(f"Missing model for {provider_name} provider")
+                return False
+            
+            logger.info(f"All required fields present for {provider_name}, proceeding with configuration")
+            self.configure_provider(provider_name, config)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to configure provider {provider_name} from environment: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
     
     def configure_from_file(self, config_file: str) -> None:
         """
