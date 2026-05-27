@@ -1,11 +1,12 @@
 from .markdown2docx import markdown_to_docx
+from .markdown2pdf import markdown_to_pdf
 from typing import Literal, Optional, Union
 from io import BytesIO
 import asyncio
 
 async def download_message(
     message: str, 
-    format: Literal['docx', 'md'], 
+    format: Literal['docx', 'md', 'pdf'], 
     output_file: Optional[str] = None
 ) -> Optional[BytesIO]:
     """
@@ -13,7 +14,7 @@ async def download_message(
     
     Args:
         message: The message content to convert
-        format: Output format ('docx' or 'md')
+        format: Output format ('docx', 'md', or 'pdf')
         output_file: Optional file path to save the document. If None, returns BytesIO stream
     
     Returns:
@@ -38,6 +39,16 @@ async def download_message(
         else:
             # Save to file asynchronously in a thread
             await asyncio.to_thread(_save_markdown_file, message, output_file)
+            return None
+    
+    elif format == 'pdf':
+        # Run synchronous markdown_to_pdf in a separate thread to avoid blocking
+        result = await asyncio.to_thread(markdown_to_pdf, message, output_file)
+        if output_file is None:
+            result.seek(0)
+            return result
+        else:
+            # File was saved, return None
             return None
 
 def _save_markdown_file(message: str, output_file: str) -> None:
