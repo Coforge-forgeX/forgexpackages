@@ -281,19 +281,17 @@ class SharePointService:
             for col_key, expected in tags_filter.items():
                 actual = fields_lower.get(col_key.lower())
                 if actual is None:
-                    logger.warning(
-                        f"Tag filter key '{col_key}' not found in SharePoint fields. "
-                        f"Available keys: {list(fields.keys())}"
-                    )
                     return False
 
                 actual_vals = self._normalize_field_value(actual)
 
                 if isinstance(expected, list):
-                    if not any(norm(e) in actual_vals for e in expected):
+                    matched = any(norm(e) in actual_vals for e in expected)
+                    if not matched:
                         return False
                 else:
-                    if norm(expected) not in actual_vals:
+                    matched = norm(expected) in actual_vals
+                    if not matched:
                         return False
 
         return True
