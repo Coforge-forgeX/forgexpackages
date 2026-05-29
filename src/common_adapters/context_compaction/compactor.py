@@ -32,12 +32,10 @@ class ContextCompactor:
             logger.info(f"Estimated token count: {token_count} (max allowed: {self.max_tokens})")
             if token_count <= self.max_tokens:
                 logger.info("No compaction needed; returning original messages.")
-                logger.debug("Exiting ContextCompactor.compact (no compaction performed).")
                 return messages
             logger.info("Compaction triggered: token count exceeds threshold.")
             compacted = await self.strategy.compact(messages, llm=self.llm)
             logger.info(f"Compaction complete. Reduced messages from {len(messages)} to {len(compacted)}.")
-            logger.debug("Exiting ContextCompactor.compact (compaction performed).")
             return compacted
         except Exception as e:
             logger.exception(f"Error during context compaction: {e}")

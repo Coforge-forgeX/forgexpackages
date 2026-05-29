@@ -7,7 +7,6 @@ logger = logging.getLogger(__name__)
 
 class SlidingWindowStrategy:
     def __init__(self, keep_last: int = 12):
-        logger.debug(f"Initializing SlidingWindowStrategy with keep_last={keep_last}")
         self.keep_last = keep_last
 
     async def compact(self, messages: List[Dict[str, str]], llm=None) -> List[Dict[str, str]]:
@@ -15,7 +14,6 @@ class SlidingWindowStrategy:
         try:
             if len(messages) <= self.keep_last:
                 logger.info(f"No sliding window compaction needed (messages <= keep_last={self.keep_last}).")
-                logger.debug("Exiting SlidingWindowStrategy.compact (no compaction performed).")
                 return messages
             logger.info(f"Sliding window compaction: keeping last {self.keep_last} messages out of {len(messages)}.")
             compacted = messages[-self.keep_last:]
@@ -37,14 +35,12 @@ class SummarizeOldMessagesStrategy:
         try:
             if len(messages) <= self.keep_last:
                 logger.info(f"No summarization needed (messages <= keep_last={self.keep_last}).")
-                logger.debug("Exiting SummarizeOldMessagesStrategy.compact (no compaction performed).")
                 return messages
             old_msgs = messages[:-self.keep_last]
             recent_msgs = messages[-self.keep_last:]
             logger.info(f"Summarization triggered: summarizing {len(old_msgs)} old messages, keeping last {self.keep_last}.")
             if llm is None:
                 logger.warning("No LLM provided for summarization; returning only recent messages.")
-                logger.debug("Exiting SummarizeOldMessagesStrategy.compact (no LLM, no summary performed).")
                 return recent_msgs
             summary_input = "\n".join(
                 f"{m.get('role', 'user')}: {m.get('content', '')}" for m in old_msgs
@@ -71,8 +67,8 @@ class SummarizeOldMessagesStrategy:
                 input=summary_input
             )
             logger.info("Summarization complete. Returning summary and recent messages.")
-            logger.debug(f"Summary content: [{self.summary_label}] {summary}")
-            logger.debug("Exiting SummarizeOldMessagesStrategy.compact (summary performed).")
+            logger.info(f"Summary content: [{self.summary_label}] {summary}")
+            logger.info("Exiting SummarizeOldMessagesStrategy.compact (summary performed).")
             
             return [
                 {
