@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "common-adapters"
-version = "1.1.0"
-description = "Shared adapter library for AI agents"
+version = "2.0.0"
+description = "Shared adapter library for AI agents with database persistence"
 requires-python = ">=3.10"
 dependencies = [
     # Existing
@@ -43,6 +43,7 @@ dependencies = [
     "reportlab>=3.6.0",      # For PDF generation
     "langfuse>=2.0.0",
     "langchain-core>=0.1.0",
+    "msal>=1.36.0",
 ]
 
 [tool.setuptools.packages.find]
