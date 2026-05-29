@@ -71,7 +71,9 @@ class SummarizeOldMessagesStrategy:
                 input=summary_input
             )
             logger.info("Summarization complete. Returning summary and recent messages.")
+            logger.debug(f"Summary content: [{self.summary_label}] {summary}")
             logger.debug("Exiting SummarizeOldMessagesStrategy.compact (summary performed).")
+            
             return [
                 {
                     "role": "system",
