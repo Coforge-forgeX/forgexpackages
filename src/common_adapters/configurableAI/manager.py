@@ -45,7 +45,7 @@ class ConfigurableAIManager:
         Configure an AI provider.
         
         Args:
-            provider_name: Name of the provider (e.g., 'openai', 'gcp', 'azure')
+            provider_name: Name of the provider (e.g., 'quasar','azure')
             config: Provider configuration (AIProviderConfig object or dict)
         """
         provider_name = provider_name.lower()
@@ -323,43 +323,27 @@ class ConfigurableAIManager:
             return AIProviderConfig.from_dict(config_dict)
 
 
-# Convenience function for quick setup with optional persistence
+# Convenience function for quick setup (env-var based, no persistence)
 def get_ai_manager(
-    provider_name: str = "azure", 
-    auto_configure: bool = True, 
-    workspace_id: Optional[int] = None, 
-    agent_id: Optional[int] = None
+    provider_name: str = "azure",
+    auto_configure: bool = True,
 ) -> ConfigurableAIManager:
     """
-    Get a ConfigurableAI Manager with optional database persistence.
-    
+    Get a ConfigurableAI Manager pre-configured from environment variables.
+
+    For database-backed, workspace-scoped managers use the tool layer
+    (_build_manager_from_db in llm_router_tool.py) instead.
+
     Args:
-        provider_name: Name of the provider to configure (used only for simple mode)
-        auto_configure: Whether to auto-configure from environment variables (used only for simple mode)
-        workspace_id: ID of the workspace (enables database persistence if provided)
-        agent_id: ID of the agent (None for workspace-level config)
-        
+        provider_name: Name of the provider to configure.
+        auto_configure: Whether to auto-configure from environment variables.
+
     Returns:
-        Configured ConfigurableAIManager instance
-        
-    Examples:
-        # Simple mode (no persistence)
-        manager = get_ai_manager("azure", auto_configure=True)
-        
-        # Persistent mode (with database)
-        manager = get_ai_manager(workspace_id=1, agent_id=42)
-        manager = get_ai_manager(workspace_id=1)  # workspace default
+        Configured ConfigurableAIManager instance.
     """
-    # If workspace_id is provided, use persistent mode
-    if workspace_id is not None:
-        return _get_persistent_manager(workspace_id, agent_id)
-    
-    # Otherwise, use simple mode
     manager = ConfigurableAIManager(default_provider=provider_name)
-    
     if auto_configure:
         manager.configure_from_env(provider_name)
-    
     return manager
 
 
@@ -370,95 +354,6 @@ _ai_managers: Dict[str, ConfigurableAIManager] = {}
 def _get_manager_key(workspace_id: int, agent_id: Optional[int] = None) -> str:
     """Generate a cache key for AI manager instances."""
     return f"ws_{workspace_id}_agent_{agent_id}"
-
-
-def _get_persistent_manager(workspace_id: int, agent_id: Optional[int] = None) -> ConfigurableAIManager:
-    """
-    Internal function to get or create an AI manager instance with database persistence.
-    
-    Args:
-        workspace_id: ID of the workspace
-        agent_id: ID of the agent (None for workspace-level config)
-        
-    Returns:
-        ConfigurableAIManager instance with database persistence
-    """
-    key = _get_manager_key(workspace_id, agent_id)
-    
-    if key not in _ai_managers:
-        _ai_managers[key] = ConfigurableAIManager()
-        
-        # Load configuration from database
-        _load_configuration_from_db(_ai_managers[key], workspace_id, agent_id)
-        
-        logger.info(f"Created new persistent AI manager for workspace {workspace_id}, agent {agent_id}")
-    
-    return _ai_managers[key]
-
-
-def _load_configuration_from_db(manager: ConfigurableAIManager, workspace_id: int, agent_id: Optional[int] = None):
-    """Load configuration from database and apply to manager."""
-    try:
-        # Import here to avoid circular dependencies
-        from kbcurator.services.agent_llm_configuration_service import agent_llm_config_service
-        
-        # Get effective configuration (agent-specific or workspace default)
-        config = agent_llm_config_service.get_effective_configuration(workspace_id, agent_id)
-        
-        if config:
-            # Configure providers from environment variables
-            configured_providers = config['configured_providers'] or []
-            
-            for provider in configured_providers:
-                try:
-                    success = manager.configure_from_env(provider)
-                    if success:
-                        logger.info(f"Configured provider {provider} from environment")
-                    else:
-                        logger.warning(f"Failed to configure provider {provider} from environment")
-                except Exception as e:
-                    logger.error(f"Error configuring provider {provider}: {e}")
-            
-            # Set current provider if specified
-            if config['current_provider'] and config['current_provider'] in configured_providers:
-                try:
-                    manager.set_current_provider(config['current_provider'])
-                    logger.info(f"Set current provider to {config['current_provider']}")
-                except Exception as e:
-                    logger.error(f"Error setting current provider: {e}")
-                    
-    except ImportError:
-        logger.warning("Could not import agent_llm_config_service. Using in-memory mode only.")
-    except Exception as e:
-        logger.error(f"Failed to load configuration from database: {e}")
-
-
-def _save_configuration_to_db(workspace_id: int, agent_id: Optional[int], provider: str, set_as_current: bool = False, user_id: Optional[int] = None):
-    """Save provider configuration to database."""
-    try:
-        # Import here to avoid circular dependencies
-        from kbcurator.services.agent_llm_configuration_service import agent_llm_config_service
-        
-        if set_as_current:
-            agent_llm_config_service.switch_provider(
-                workspace_id=workspace_id,
-                provider=provider,
-                agent_id=agent_id,
-                user_id=user_id
-            )
-        else:
-            agent_llm_config_service.add_provider(
-                workspace_id=workspace_id,
-                provider=provider,
-                agent_id=agent_id,
-                set_as_current=False,
-                user_id=user_id
-            )
-        logger.info(f"Saved provider {provider} configuration to database")
-    except ImportError:
-        logger.warning("Could not import agent_llm_config_service. Configuration not persisted.")
-    except Exception as e:
-        logger.error(f"Failed to save configuration to database: {e}")
 
 
 def clear_ai_manager_cache(workspace_id: Optional[int] = None, agent_id: Optional[int] = None):
