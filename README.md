@@ -1,2 +1,0 @@
-# common-adapters
-Reusable adapters.
