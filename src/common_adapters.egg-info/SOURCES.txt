@@ -35,6 +35,10 @@ src/common_adapters/configurableAI/examples.py
 src/common_adapters/configurableAI/manager.py
 src/common_adapters/configurableAI/providers.py
 src/common_adapters/configurableAI/setup.py
+src/common_adapters/context_compaction/__init__.py
+src/common_adapters/context_compaction/compactor.py
+src/common_adapters/context_compaction/strategies.py
+src/common_adapters/context_compaction/token_counter.py
 src/common_adapters/database/__init__.py
 src/common_adapters/database/base.py
 src/common_adapters/database/config.py
@@ -51,6 +55,7 @@ src/common_adapters/doc_extract/providers/azure_di.py
 src/common_adapters/download_response/__init__.py
 src/common_adapters/download_response/download.py
 src/common_adapters/download_response/markdown2docx.py
+src/common_adapters/download_response/markdown2pdf.py
 src/common_adapters/download_response/prompts.py
 src/common_adapters/langfuse_instrumentation/__init__.py
 src/common_adapters/langfuse_instrumentation/instrumentation.py
@@ -59,6 +64,12 @@ src/common_adapters/lightrag/neptune/__init__.py
 src/common_adapters/lightrag/neptune/client.py
 src/common_adapters/lightrag/neptune/neptune_impl.py
 src/common_adapters/lightrag/neptune/neptune_to_neo4j_converter.py
+src/common_adapters/sharepoint/__init__.py
+src/common_adapters/sharepoint/client.py
+src/common_adapters/sharepoint/service.py
+src/common_adapters/sharepoint/sharepoint_client_manager.py
+src/common_adapters/sharepoint/sharepoint_connection.py
+src/common_adapters/sharepoint/sharepoint_update_config.py
 src/common_adapters/storage/__init__.py
 src/common_adapters/storage/azure_blob_client.py
 src/common_adapters/storage/base.py

@@ -156,7 +156,7 @@ class AzureOpenAIProvider(BaseAIProvider):
             
             # Azure OpenAI client is synchronous, not async
             response = client.chat.completions.create(
-                model=getattr(self.config, 'deployment_name', self.config.model),
+                model=getattr(self.config, 'deployment_name', None) or self.config.model,
                 messages=[{"role": "user", "content": prompt}],
                 **kwargs
             )
