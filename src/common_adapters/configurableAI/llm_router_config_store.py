@@ -68,10 +68,16 @@ class LLMRouterConfigStore:
     """CRUD abstraction over a single MongoDB config document per workspace."""
 
     def __init__(self):
-        client = _get_mongo_client()
-        self._collection = client[LLM_CONFIG_DB_NAME][LLM_CONFIG_COLLECTION_NAME]
+        self._collection = None
         self._indexes_ready = False
-        self._ensure_indexes()
+
+    def _get_collection(self):
+        """Lazy initialization — connects to MongoDB on first use."""
+        if self._collection is None:
+            client = _get_mongo_client()
+            self._collection = client[LLM_CONFIG_DB_NAME][LLM_CONFIG_COLLECTION_NAME]
+            self._ensure_indexes()
+        return self._collection
 
     def _ensure_indexes(self) -> None:
         if self._indexes_ready:
@@ -90,7 +96,7 @@ class LLMRouterConfigStore:
 
     def _ensure_workspace_document(self, workspace_id: int) -> None:
         now = self._utcnow()
-        self._collection.update_one(
+        self._get_collection().update_one(
             {"workspace_id": workspace_id},
             {
                 "$setOnInsert": {
@@ -105,7 +111,7 @@ class LLMRouterConfigStore:
         )
 
     def _get_workspace_document(self, workspace_id: int) -> Optional[Dict[str, Any]]:
-        return self._collection.find_one({"workspace_id": workspace_id})
+        return self._get_collection().find_one({"workspace_id": workspace_id})
 
     # ------------------------------------------------------------------
     # Provider credentials
@@ -203,7 +209,7 @@ class LLMRouterConfigStore:
             "updated_by": user_id,
         }
 
-        self._collection.update_one(
+        self._get_collection().update_one(
             {"workspace_id": workspace_id},
             {
                 "$set": {
@@ -228,7 +234,7 @@ class LLMRouterConfigStore:
             return False
 
         now = self._utcnow()
-        self._collection.update_one(
+        self._get_collection().update_one(
             {"workspace_id": workspace_id},
             {
                 "$set": {
@@ -317,7 +323,7 @@ class LLMRouterConfigStore:
             "updated_by": user_id,
         }
 
-        self._collection.update_one(
+        self._get_collection().update_one(
             {"workspace_id": workspace_id},
             {
                 "$set": {
@@ -425,7 +431,7 @@ class LLMRouterConfigStore:
             return False
 
         now = self._utcnow()
-        self._collection.update_one(
+        self._get_collection().update_one(
             {"workspace_id": workspace_id},
             {
                 "$set": {
@@ -487,7 +493,7 @@ class LLMRouterConfigStore:
             return 0
 
         updates["updated_at"] = now
-        self._collection.update_one({"workspace_id": workspace_id}, {"$set": updates})
+        self._get_collection().update_one({"workspace_id": workspace_id}, {"$set": updates})
         return count
 
 
