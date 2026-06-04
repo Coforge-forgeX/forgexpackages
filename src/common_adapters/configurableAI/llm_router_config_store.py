@@ -82,9 +82,39 @@ class LLMRouterConfigStore:
     def _ensure_indexes(self) -> None:
         if self._indexes_ready:
             return
+        # Deduplicate any existing documents before creating unique index
+        self._deduplicate_workspace_documents()
         self._collection.create_index("workspace_id", unique=True, name="uq_workspace_id")
         self._collection.create_index("updated_at", name="idx_updated_at")
         self._indexes_ready = True
+
+    def _deduplicate_workspace_documents(self) -> None:
+        """Remove duplicate workspace documents, keeping the most recently updated one."""
+        try:
+            pipeline = [
+                {"$group": {
+                    "_id": "$workspace_id",
+                    "count": {"$sum": 1},
+                    "docs": {"$push": {"_id": "$_id", "updated_at": "$updated_at"}},
+                }},
+                {"$match": {"count": {"$gt": 1}}},
+            ]
+            duplicates = list(self._collection.aggregate(pipeline))
+            for dup in duplicates:
+                docs = sorted(
+                    dup["docs"],
+                    key=lambda d: d.get("updated_at") or datetime.min.replace(tzinfo=timezone.utc),
+                    reverse=True,
+                )
+                # Keep the first (most recent), delete the rest
+                ids_to_delete = [d["_id"] for d in docs[1:]]
+                if ids_to_delete:
+                    self._collection.delete_many({"_id": {"$in": ids_to_delete}})
+                    logger.info(
+                        f"Deduplicated workspace_id={dup['_id']}: removed {len(ids_to_delete)} duplicate(s)"
+                    )
+        except Exception as e:
+            logger.warning(f"Deduplication check failed (non-fatal): {e}")
 
     @staticmethod
     def _utcnow() -> datetime:
@@ -475,26 +505,18 @@ class LLMRouterConfigStore:
         return created
 
     def delete_workspace_configurations(self, workspace_id: int, user_id: Optional[int] = None) -> int:
-        doc = self._get_workspace_document(workspace_id)
-        if not doc:
-            return 0
+        """Hard-delete the entire workspace document from llm_configs.workspace_configs.
 
-        count = 0
-        updates: Dict[str, Any] = {}
-        now = self._utcnow()
-        for key, cfg in (doc.get("agent_configs") or {}).items():
-            if cfg.get("is_active", True):
-                updates[f"agent_configs.{key}.is_active"] = False
-                updates[f"agent_configs.{key}.updated_at"] = now
-                updates[f"agent_configs.{key}.updated_by"] = user_id
-                count += 1
-
-        if count == 0:
-            return 0
-
-        updates["updated_at"] = now
-        self._get_collection().update_one({"workspace_id": workspace_id}, {"$set": updates})
-        return count
+        When a workspace is deleted, there is no reason to keep a soft-deleted
+        config document around — remove it entirely so that:
+        1. One workspace always has at most one document.
+        2. Redeployments against a fresh or different MongoDB don't accumulate orphans.
+        """
+        result = self._get_collection().delete_one({"workspace_id": workspace_id})
+        deleted = result.deleted_count
+        if deleted:
+            logger.info(f"Hard-deleted workspace config document for workspace_id={workspace_id}")
+        return deleted
 
 
 llm_router_config_store = LLMRouterConfigStore()

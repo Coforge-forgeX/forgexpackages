@@ -32,6 +32,8 @@ src/common_adapters/cache/redis_cache.py
 src/common_adapters/configurableAI/__init__.py
 src/common_adapters/configurableAI/config.py
 src/common_adapters/configurableAI/examples.py
+src/common_adapters/configurableAI/llm_router.py
+src/common_adapters/configurableAI/llm_router_config_store.py
 src/common_adapters/configurableAI/manager.py
 src/common_adapters/configurableAI/providers.py
 src/common_adapters/configurableAI/setup.py
