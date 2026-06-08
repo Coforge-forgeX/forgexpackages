@@ -337,8 +337,6 @@ class LLMRouterConfigStore:
             "configured_models": cfg.get("configured_models") or {},
             "current_provider": cfg.get("current_provider"),
             "current_model": cfg.get("current_model"),
-            # Backward compat: expose current_models if it exists (for migration)
-            "current_models": cfg.get("current_models") or {},
             "created_at": cfg.get("created_at"),
             "updated_at": cfg.get("updated_at"),
             "created_by": cfg.get("created_by"),
@@ -356,7 +354,6 @@ class LLMRouterConfigStore:
         configured_models: Optional[Dict[str, List[str]]] = None,
         current_provider: Optional[str] = None,
         current_model: Optional[str] = None,
-        current_models: Optional[Dict[str, str]] = None,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         self._ensure_workspace_document(workspace_id)
@@ -386,16 +383,6 @@ class LLMRouterConfigStore:
         resolved_model = current_model
         if resolved_model is None:
             resolved_model = (existing or {}).get("current_model")
-        # Fallback: if still None and we have current_models (legacy), use it
-        if resolved_model is None and current_models:
-            p = selected_provider or (existing or {}).get("current_provider")
-            if p and p in current_models:
-                resolved_model = current_models[p]
-
-        # Legacy current_models merge (for backward compat during migration)
-        legacy_models_map = dict((existing or {}).get("current_models") or {})
-        if current_models is not None:
-            legacy_models_map.update(current_models)
 
         now = self._utcnow()
         key = self._agent_key(agent_id)
@@ -404,7 +391,6 @@ class LLMRouterConfigStore:
             "configured_models": models_map,
             "current_provider": selected_provider if current_provider is not None else (existing or {}).get("current_provider"),
             "current_model": resolved_model,
-            "current_models": legacy_models_map,
             "is_active": True,
             "created_at": (existing or {}).get("created_at", now),
             "updated_at": now,
@@ -464,18 +450,12 @@ class LLMRouterConfigStore:
                     f"Available: {[m['model_name'] for m in available_models]}"
                 )
 
-        # Legacy current_models update
-        current_models = dict((cfg or {}).get("current_models") or {})
-        if resolved_model:
-            current_models[selected] = resolved_model
-
         return self.create_or_update_configuration(
             workspace_id=workspace_id,
             agent_id=agent_id,
             configured_providers=providers,
             current_provider=selected,
             current_model=resolved_model,
-            current_models=current_models,
             user_id=user_id,
         )
 
@@ -512,11 +492,6 @@ class LLMRouterConfigStore:
             provider_models.append(resolved_model)
         configured_models[selected] = provider_models
 
-        # Legacy current_models
-        current_models = dict((cfg or {}).get("current_models") or {})
-        if resolved_model and selected not in current_models:
-            current_models[selected] = resolved_model
-
         # Determine current_provider and current_model
         current_provider = selected if set_as_current else (cfg or {}).get("current_provider")
         current_model_val = None
@@ -532,7 +507,6 @@ class LLMRouterConfigStore:
             configured_models=configured_models,
             current_provider=current_provider,
             current_model=current_model_val,
-            current_models=current_models,
             user_id=user_id,
         )
 
@@ -594,7 +568,6 @@ class LLMRouterConfigStore:
                     "configured_models": cfg.get("configured_models") or {},
                     "current_provider": cfg.get("current_provider"),
                     "current_model": cfg.get("current_model"),
-                    "current_models": cfg.get("current_models") or {},
                     "created_at": cfg.get("created_at"),
                     "updated_at": cfg.get("updated_at"),
                     "created_by": cfg.get("created_by"),

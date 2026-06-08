@@ -134,15 +134,16 @@ def get_configured_llm_manager(
     configured_providers = config.get("configured_providers") or []
     current_provider = config.get("current_provider")
     current_model = config.get("current_model")
-    # Legacy fallback: use current_models dict if current_model not set
-    current_models = config.get("current_models") or {}
 
     for provider in configured_providers:
-        # Use current_model if this is the active provider, else use legacy current_models
+        # Use current_model for the active provider; for other providers use their first configured model
         if provider == current_provider and current_model:
             model_override = current_model
         else:
-            model_override = current_models.get(provider)
+            # Use first model from configured_models for this provider
+            configured_models = config.get("configured_models") or {}
+            provider_models = configured_models.get(provider) or []
+            model_override = provider_models[0] if provider_models else None
         creds_dict = llm_router_config_store.build_config_dict(workspace_id, provider, model_override=model_override)
         if creds_dict:
             try:
