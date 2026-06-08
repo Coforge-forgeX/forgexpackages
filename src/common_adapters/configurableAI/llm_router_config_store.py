@@ -415,18 +415,21 @@ class LLMRouterConfigStore:
         if selected not in providers:
             providers.append(selected)
 
-        # If model is specified, validate and update current_models
-        current_models = None
+        # Build current_models: validate explicit model or use provider default
+        current_models = dict((cfg or {}).get("current_models") or {})
+        creds = self.get_provider_credentials(workspace_id, selected)
         if model:
-            creds = self.get_provider_credentials(workspace_id, selected)
             available_models = (creds or {}).get("available_models") or []
             if not any(m["model_name"] == model for m in available_models):
                 raise ValueError(
                     f"Model '{model}' is not available for provider '{selected}'. "
                     f"Available: {[m['model_name'] for m in available_models]}"
                 )
-            current_models = dict((cfg or {}).get("current_models") or {})
             current_models[selected] = model
+        elif selected not in current_models:
+            # No explicit model and no prior selection — use provider's default model
+            if creds and creds.get("model"):
+                current_models[selected] = creds["model"]
 
         return self.create_or_update_configuration(
             workspace_id=workspace_id,
@@ -454,11 +457,19 @@ class LLMRouterConfigStore:
         if selected not in providers:
             providers.append(selected)
 
+        # Auto-populate current_models with the provider's default model if not set
+        current_models = dict((cfg or {}).get("current_models") or {})
+        if selected not in current_models:
+            creds = self.get_provider_credentials(workspace_id, selected)
+            if creds and creds.get("model"):
+                current_models[selected] = creds["model"]
+
         return self.create_or_update_configuration(
             workspace_id=workspace_id,
             agent_id=agent_id,
             configured_providers=providers,
             current_provider=selected if set_as_current else (cfg or {}).get("current_provider"),
+            current_models=current_models,
             user_id=user_id,
         )
 
@@ -539,6 +550,12 @@ class LLMRouterConfigStore:
         defaults = configured_providers or ["azure"]
         active_provider = current_provider or "azure"
 
+        # Auto-populate current_models with the active provider's default model
+        current_models = {}
+        creds = self.get_provider_credentials(workspace_id, active_provider)
+        if creds and creds.get("model"):
+            current_models[active_provider] = creds["model"]
+
         for agent_id in agent_ids:
             existing = self.get_configuration(workspace_id, agent_id)
             if existing:
@@ -549,6 +566,7 @@ class LLMRouterConfigStore:
                     agent_id=agent_id,
                     configured_providers=defaults,
                     current_provider=active_provider,
+                    current_models=current_models or None,
                     user_id=user_id,
                 )
             )
@@ -567,6 +585,53 @@ class LLMRouterConfigStore:
         if deleted:
             logger.info(f"Hard-deleted workspace config document for workspace_id={workspace_id}")
         return deleted
+
+    def remove_model_from_provider(
+        self,
+        workspace_id: int,
+        provider_name: str,
+        model_name: str,
+        user_id: Optional[int] = None,
+    ) -> bool:
+        """Remove a specific model from a provider's available_models list.
+
+        If the removed model was the top-level 'model', update it to the first remaining model.
+        """
+        provider = provider_name.lower().strip()
+        existing = self.get_provider_credentials(workspace_id, provider)
+        if not existing:
+            return False
+
+        available_models = existing.get("available_models") or []
+        updated_models = [m for m in available_models if m["model_name"] != model_name]
+
+        if len(updated_models) == len(available_models):
+            return False  # Model not found
+
+        now = self._utcnow()
+
+        # If the removed model was the top-level model, switch to the first remaining
+        top_level_model = existing.get("model")
+        new_top_model = top_level_model
+        new_deployment = existing.get("deployment_name")
+        if top_level_model == model_name and updated_models:
+            new_top_model = updated_models[0]["model_name"]
+            new_deployment = updated_models[0].get("deployment_name") or new_top_model
+
+        self._get_collection().update_one(
+            {"workspace_id": workspace_id},
+            {
+                "$set": {
+                    f"provider_credentials.{provider}.available_models": updated_models,
+                    f"provider_credentials.{provider}.model": new_top_model,
+                    f"provider_credentials.{provider}.deployment_name": new_deployment,
+                    f"provider_credentials.{provider}.updated_at": now,
+                    f"provider_credentials.{provider}.updated_by": user_id,
+                    "updated_at": now,
+                }
+            },
+        )
+        return True
 
 
 llm_router_config_store = LLMRouterConfigStore()
