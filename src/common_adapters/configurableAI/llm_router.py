@@ -133,9 +133,12 @@ def get_configured_llm_manager(
 
     configured_providers = config.get("configured_providers") or []
     current_provider = config.get("current_provider")
+    current_models = config.get("current_models") or {}
 
     for provider in configured_providers:
-        creds_dict = llm_router_config_store.build_config_dict(workspace_id, provider)
+        # Use the agent's selected model for this provider (if any)
+        model_override = current_models.get(provider)
+        creds_dict = llm_router_config_store.build_config_dict(workspace_id, provider, model_override=model_override)
         if creds_dict:
             try:
                 manager.configure_provider(provider, creds_dict)

@@ -165,6 +165,7 @@ class LLMRouterConfigStore:
             "model": entry.get("model"),
             "api_version": entry.get("api_version"),
             "deployment_name": entry.get("deployment_name"),
+            "available_models": entry.get("available_models") or [],
             "extra_config": entry.get("extra_config") or {},
             "is_active": True,
             "created_at": entry.get("created_at"),
@@ -185,21 +186,34 @@ class LLMRouterConfigStore:
                 providers.append(creds)
         return providers
 
-    def build_config_dict(self, workspace_id: int, provider_name: str) -> Optional[Dict[str, Any]]:
+    def build_config_dict(self, workspace_id: int, provider_name: str, model_override: Optional[str] = None) -> Optional[Dict[str, Any]]:
         creds = self.get_provider_credentials(workspace_id, provider_name)
         if not creds:
             return None
 
         provider = provider_name.lower().strip()
+        model = model_override or creds["model"]
+
+        # Resolve deployment_name for the overridden model
+        deployment_name = model
+        if model_override:
+            available_models = creds.get("available_models") or []
+            for m in available_models:
+                if m["model_name"] == model_override:
+                    deployment_name = m.get("deployment_name") or model_override
+                    break
+        else:
+            deployment_name = creds.get("deployment_name") or model
+
         config = {
             "provider_name": provider,
             "api_key": creds["api_key"],
             "endpoint": creds["endpoint"],
-            "model": creds["model"],
+            "model": model,
             "extra_params": creds.get("extra_config") or {},
         }
         if provider == "azure":
-            config["deployment_name"] = creds.get("deployment_name") or creds.get("model")
+            config["deployment_name"] = deployment_name
             config["api_version"] = creds.get("api_version")
         return config
 
@@ -225,12 +239,24 @@ class LLMRouterConfigStore:
 
         existing = self.get_provider_credentials(workspace_id, provider)
         now = self._utcnow()
+
+        # Preserve existing available_models list, or initialize with the current model
+        existing_models = []
+        if existing:
+            existing_models = existing.get("available_models") or []
+
+        # Ensure the current model is in available_models
+        model_entry = {"model_name": model, "deployment_name": deployment_name or model}
+        if not any(m["model_name"] == model for m in existing_models):
+            existing_models.append(model_entry)
+
         payload = {
             "api_key": api_key,
             "endpoint": endpoint,
             "model": model,
             "api_version": api_version,
             "deployment_name": deployment_name or model,
+            "available_models": existing_models,
             "extra_config": extra_config or {},
             "is_active": True,
             "created_at": existing.get("created_at") if existing else now,
@@ -307,6 +333,7 @@ class LLMRouterConfigStore:
             "agent_id": agent_id,
             "configured_providers": cfg.get("configured_providers") or [],
             "current_provider": cfg.get("current_provider"),
+            "current_models": cfg.get("current_models") or {},
             "created_at": cfg.get("created_at"),
             "updated_at": cfg.get("updated_at"),
             "created_by": cfg.get("created_by"),
@@ -322,6 +349,7 @@ class LLMRouterConfigStore:
         agent_id: Optional[int] = None,
         configured_providers: Optional[List[str]] = None,
         current_provider: Optional[str] = None,
+        current_models: Optional[Dict[str, str]] = None,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         self._ensure_workspace_document(workspace_id)
@@ -341,11 +369,17 @@ class LLMRouterConfigStore:
         if selected_provider and selected_provider not in providers:
             providers.append(selected_provider)
 
+        # Merge current_models: keep existing, override with provided
+        models_map = dict((existing or {}).get("current_models") or {})
+        if current_models is not None:
+            models_map.update(current_models)
+
         now = self._utcnow()
         key = self._agent_key(agent_id)
         payload = {
             "configured_providers": providers,
             "current_provider": selected_provider if current_provider is not None else (existing or {}).get("current_provider"),
+            "current_models": models_map,
             "is_active": True,
             "created_at": (existing or {}).get("created_at", now),
             "updated_at": now,
@@ -369,6 +403,7 @@ class LLMRouterConfigStore:
         workspace_id: int,
         provider: str,
         agent_id: Optional[int] = None,
+        model: Optional[str] = None,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         selected = provider.lower().strip()
@@ -380,11 +415,25 @@ class LLMRouterConfigStore:
         if selected not in providers:
             providers.append(selected)
 
+        # If model is specified, validate and update current_models
+        current_models = None
+        if model:
+            creds = self.get_provider_credentials(workspace_id, selected)
+            available_models = (creds or {}).get("available_models") or []
+            if not any(m["model_name"] == model for m in available_models):
+                raise ValueError(
+                    f"Model '{model}' is not available for provider '{selected}'. "
+                    f"Available: {[m['model_name'] for m in available_models]}"
+                )
+            current_models = dict((cfg or {}).get("current_models") or {})
+            current_models[selected] = model
+
         return self.create_or_update_configuration(
             workspace_id=workspace_id,
             agent_id=agent_id,
             configured_providers=providers,
             current_provider=selected,
+            current_models=current_models,
             user_id=user_id,
         )
 
@@ -430,6 +479,7 @@ class LLMRouterConfigStore:
                     "agent_id": agent_id,
                     "configured_providers": cfg.get("configured_providers") or [],
                     "current_provider": cfg.get("current_provider"),
+                    "current_models": cfg.get("current_models") or {},
                     "created_at": cfg.get("created_at"),
                     "updated_at": cfg.get("updated_at"),
                     "created_by": cfg.get("created_by"),

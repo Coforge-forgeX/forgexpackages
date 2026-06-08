@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: common-adapters
-Version: 2.0.3
+Version: 2.2.2
 Summary: Shared adapter library for AI agents with database persistence
 Requires-Python: >=3.10
 Requires-Dist: tenacity>=8.2.0
