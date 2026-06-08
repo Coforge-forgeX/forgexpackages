@@ -166,6 +166,7 @@ class LLMRouterConfigStore:
             "api_version": entry.get("api_version"),
             "deployment_name": entry.get("deployment_name"),
             "available_models": entry.get("available_models") or [],
+            "model_assignments": entry.get("model_assignments") or {},
             "extra_config": entry.get("extra_config") or {},
             "is_active": True,
             "created_at": entry.get("created_at"),
@@ -257,6 +258,7 @@ class LLMRouterConfigStore:
             "api_version": api_version,
             "deployment_name": deployment_name or model,
             "available_models": existing_models,
+            "model_assignments": existing.get("model_assignments") or {} if existing else {},
             "extra_config": extra_config or {},
             "is_active": True,
             "created_at": existing.get("created_at") if existing else now,
@@ -628,10 +630,54 @@ class LLMRouterConfigStore:
                     f"provider_credentials.{provider}.updated_at": now,
                     f"provider_credentials.{provider}.updated_by": user_id,
                     "updated_at": now,
-                }
+                },
+                "$unset": {
+                    f"provider_credentials.{provider}.model_assignments.{model_name}": "",
+                },
             },
         )
         return True
+
+    def set_model_assignments(
+        self,
+        workspace_id: int,
+        provider_name: str,
+        model_name: str,
+        agent_ids: List[int],
+        user_id: Optional[int] = None,
+    ) -> None:
+        """Set the agent assignments for a specific model under a provider.
+
+        This is independent per model — setting agents for model A does NOT
+        affect model B's assignments.
+        """
+        provider = provider_name.lower().strip()
+        now = self._utcnow()
+        self._get_collection().update_one(
+            {"workspace_id": workspace_id},
+            {
+                "$set": {
+                    f"provider_credentials.{provider}.model_assignments.{model_name}": agent_ids,
+                    f"provider_credentials.{provider}.updated_at": now,
+                    f"provider_credentials.{provider}.updated_by": user_id,
+                    "updated_at": now,
+                }
+            },
+        )
+
+    def get_model_assignments(
+        self,
+        workspace_id: int,
+        provider_name: str,
+        model_name: str,
+    ) -> List[int]:
+        """Get agent IDs assigned to a specific model under a provider."""
+        provider = provider_name.lower().strip()
+        existing = self.get_provider_credentials(workspace_id, provider)
+        if not existing:
+            return []
+        assignments = existing.get("model_assignments") or {}
+        return assignments.get(model_name) or []
 
 
 llm_router_config_store = LLMRouterConfigStore()
