@@ -702,11 +702,18 @@ class LLMRouterConfigStore:
                     f"provider_credentials.{provider}.updated_by": user_id,
                     "updated_at": now,
                 },
-                "$unset": {
-                    f"provider_credentials.{provider}.model_assignments.{model_name}": "",
-                },
             },
         )
+
+        # Remove model from model_assignments (handle dots in model names)
+        current_assignments = existing.get("model_assignments") or {}
+        if model_name in current_assignments:
+            del current_assignments[model_name]
+            self._get_collection().update_one(
+                {"workspace_id": workspace_id},
+                {"$set": {f"provider_credentials.{provider}.model_assignments": current_assignments}},
+            )
+
         return True
 
     def set_model_assignments(
@@ -724,11 +731,18 @@ class LLMRouterConfigStore:
         """
         provider = provider_name.lower().strip()
         now = self._utcnow()
+
+        # Read the full model_assignments dict, update the key, write back
+        # (avoids MongoDB dot-notation issues with model names like 'gpt-4.1')
+        existing = self.get_provider_credentials(workspace_id, provider)
+        current_assignments = (existing.get("model_assignments") or {}) if existing else {}
+        current_assignments[model_name] = agent_ids
+
         self._get_collection().update_one(
             {"workspace_id": workspace_id},
             {
                 "$set": {
-                    f"provider_credentials.{provider}.model_assignments.{model_name}": agent_ids,
+                    f"provider_credentials.{provider}.model_assignments": current_assignments,
                     f"provider_credentials.{provider}.updated_at": now,
                     f"provider_credentials.{provider}.updated_by": user_id,
                     "updated_at": now,
