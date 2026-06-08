@@ -133,11 +133,16 @@ def get_configured_llm_manager(
 
     configured_providers = config.get("configured_providers") or []
     current_provider = config.get("current_provider")
+    current_model = config.get("current_model")
+    # Legacy fallback: use current_models dict if current_model not set
     current_models = config.get("current_models") or {}
 
     for provider in configured_providers:
-        # Use the agent's selected model for this provider (if any)
-        model_override = current_models.get(provider)
+        # Use current_model if this is the active provider, else use legacy current_models
+        if provider == current_provider and current_model:
+            model_override = current_model
+        else:
+            model_override = current_models.get(provider)
         creds_dict = llm_router_config_store.build_config_dict(workspace_id, provider, model_override=model_override)
         if creds_dict:
             try:

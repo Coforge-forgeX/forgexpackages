@@ -334,7 +334,10 @@ class LLMRouterConfigStore:
             "workspace_id": workspace_id,
             "agent_id": agent_id,
             "configured_providers": cfg.get("configured_providers") or [],
+            "configured_models": cfg.get("configured_models") or {},
             "current_provider": cfg.get("current_provider"),
+            "current_model": cfg.get("current_model"),
+            # Backward compat: expose current_models if it exists (for migration)
             "current_models": cfg.get("current_models") or {},
             "created_at": cfg.get("created_at"),
             "updated_at": cfg.get("updated_at"),
@@ -350,7 +353,9 @@ class LLMRouterConfigStore:
         workspace_id: int,
         agent_id: Optional[int] = None,
         configured_providers: Optional[List[str]] = None,
+        configured_models: Optional[Dict[str, List[str]]] = None,
         current_provider: Optional[str] = None,
+        current_model: Optional[str] = None,
         current_models: Optional[Dict[str, str]] = None,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
@@ -371,17 +376,35 @@ class LLMRouterConfigStore:
         if selected_provider and selected_provider not in providers:
             providers.append(selected_provider)
 
-        # Merge current_models: keep existing, override with provided
-        models_map = dict((existing or {}).get("current_models") or {})
+        # Merge configured_models: keep existing, override with provided
+        models_map = dict((existing or {}).get("configured_models") or {})
+        if configured_models is not None:
+            for prov, model_list in configured_models.items():
+                models_map[prov] = list(model_list)
+
+        # Resolve current_model
+        resolved_model = current_model
+        if resolved_model is None:
+            resolved_model = (existing or {}).get("current_model")
+        # Fallback: if still None and we have current_models (legacy), use it
+        if resolved_model is None and current_models:
+            p = selected_provider or (existing or {}).get("current_provider")
+            if p and p in current_models:
+                resolved_model = current_models[p]
+
+        # Legacy current_models merge (for backward compat during migration)
+        legacy_models_map = dict((existing or {}).get("current_models") or {})
         if current_models is not None:
-            models_map.update(current_models)
+            legacy_models_map.update(current_models)
 
         now = self._utcnow()
         key = self._agent_key(agent_id)
         payload = {
             "configured_providers": providers,
+            "configured_models": models_map,
             "current_provider": selected_provider if current_provider is not None else (existing or {}).get("current_provider"),
-            "current_models": models_map,
+            "current_model": resolved_model,
+            "current_models": legacy_models_map,
             "is_active": True,
             "created_at": (existing or {}).get("created_at", now),
             "updated_at": now,
@@ -408,6 +431,7 @@ class LLMRouterConfigStore:
         model: Optional[str] = None,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Switch the active provider+model for an agent."""
         selected = provider.lower().strip()
         if selected not in SUPPORTED_PROVIDERS:
             raise ValueError(f"Invalid provider: {selected}")
@@ -417,27 +441,40 @@ class LLMRouterConfigStore:
         if selected not in providers:
             providers.append(selected)
 
-        # Build current_models: validate explicit model or use provider default
-        current_models = dict((cfg or {}).get("current_models") or {})
-        creds = self.get_provider_credentials(workspace_id, selected)
-        if model:
+        # Resolve model
+        resolved_model = model
+        if not resolved_model:
+            # Use first configured model for this provider, or provider default
+            configured_models = (cfg or {}).get("configured_models") or {}
+            provider_models = configured_models.get(selected) or []
+            if provider_models:
+                resolved_model = provider_models[0]
+            else:
+                creds = self.get_provider_credentials(workspace_id, selected)
+                if creds and creds.get("model"):
+                    resolved_model = creds["model"]
+
+        # Validate model exists in provider
+        if resolved_model:
+            creds = self.get_provider_credentials(workspace_id, selected)
             available_models = (creds or {}).get("available_models") or []
-            if not any(m["model_name"] == model for m in available_models):
+            if available_models and not any(m["model_name"] == resolved_model for m in available_models):
                 raise ValueError(
-                    f"Model '{model}' is not available for provider '{selected}'. "
+                    f"Model '{resolved_model}' is not available for provider '{selected}'. "
                     f"Available: {[m['model_name'] for m in available_models]}"
                 )
-            current_models[selected] = model
-        elif selected not in current_models:
-            # No explicit model and no prior selection — use provider's default model
-            if creds and creds.get("model"):
-                current_models[selected] = creds["model"]
+
+        # Legacy current_models update
+        current_models = dict((cfg or {}).get("current_models") or {})
+        if resolved_model:
+            current_models[selected] = resolved_model
 
         return self.create_or_update_configuration(
             workspace_id=workspace_id,
             agent_id=agent_id,
             configured_providers=providers,
             current_provider=selected,
+            current_model=resolved_model,
             current_models=current_models,
             user_id=user_id,
         )
@@ -448,8 +485,10 @@ class LLMRouterConfigStore:
         provider: str,
         agent_id: Optional[int] = None,
         set_as_current: bool = False,
+        model: Optional[str] = None,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Add a provider to an agent's configuration."""
         selected = provider.lower().strip()
         if selected not in SUPPORTED_PROVIDERS:
             raise ValueError(f"Invalid provider: {selected}")
@@ -459,19 +498,80 @@ class LLMRouterConfigStore:
         if selected not in providers:
             providers.append(selected)
 
-        # Auto-populate current_models with the provider's default model if not set
-        current_models = dict((cfg or {}).get("current_models") or {})
-        if selected not in current_models:
+        # Resolve model for the new provider
+        resolved_model = model
+        if not resolved_model:
             creds = self.get_provider_credentials(workspace_id, selected)
             if creds and creds.get("model"):
-                current_models[selected] = creds["model"]
+                resolved_model = creds["model"]
+
+        # Add model to configured_models for this provider
+        configured_models = dict((cfg or {}).get("configured_models") or {})
+        provider_models = list(configured_models.get(selected) or [])
+        if resolved_model and resolved_model not in provider_models:
+            provider_models.append(resolved_model)
+        configured_models[selected] = provider_models
+
+        # Legacy current_models
+        current_models = dict((cfg or {}).get("current_models") or {})
+        if resolved_model and selected not in current_models:
+            current_models[selected] = resolved_model
+
+        # Determine current_provider and current_model
+        current_provider = selected if set_as_current else (cfg or {}).get("current_provider")
+        current_model_val = None
+        if set_as_current:
+            current_model_val = resolved_model
+        else:
+            current_model_val = (cfg or {}).get("current_model")
 
         return self.create_or_update_configuration(
             workspace_id=workspace_id,
             agent_id=agent_id,
             configured_providers=providers,
-            current_provider=selected if set_as_current else (cfg or {}).get("current_provider"),
+            configured_models=configured_models,
+            current_provider=current_provider,
+            current_model=current_model_val,
             current_models=current_models,
+            user_id=user_id,
+        )
+
+    def add_model_to_agent(
+        self,
+        workspace_id: int,
+        provider: str,
+        model: str,
+        agent_id: Optional[int] = None,
+        set_as_current: bool = False,
+        user_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Add a specific model to an agent's configured_models for a provider."""
+        selected = provider.lower().strip()
+        cfg = self.get_configuration(workspace_id, agent_id)
+
+        providers = list(cfg.get("configured_providers") or []) if cfg else []
+        if selected not in providers:
+            providers.append(selected)
+
+        configured_models = dict((cfg or {}).get("configured_models") or {})
+        provider_models = list(configured_models.get(selected) or [])
+        if model not in provider_models:
+            provider_models.append(model)
+        configured_models[selected] = provider_models
+
+        current_provider = (cfg or {}).get("current_provider")
+        current_model_val = (cfg or {}).get("current_model")
+        if set_as_current:
+            current_provider = selected
+            current_model_val = model
+
+        return self.create_or_update_configuration(
+            workspace_id=workspace_id,
+            agent_id=agent_id,
+            configured_providers=providers,
+            configured_models=configured_models,
+            current_provider=current_provider,
+            current_model=current_model_val,
             user_id=user_id,
         )
 
@@ -491,7 +591,9 @@ class LLMRouterConfigStore:
                     "workspace_id": workspace_id,
                     "agent_id": agent_id,
                     "configured_providers": cfg.get("configured_providers") or [],
+                    "configured_models": cfg.get("configured_models") or {},
                     "current_provider": cfg.get("current_provider"),
+                    "current_model": cfg.get("current_model"),
                     "current_models": cfg.get("current_models") or {},
                     "created_at": cfg.get("created_at"),
                     "updated_at": cfg.get("updated_at"),
@@ -552,11 +654,12 @@ class LLMRouterConfigStore:
         defaults = configured_providers or ["azure"]
         active_provider = current_provider or "azure"
 
-        # Auto-populate current_models with the active provider's default model
-        current_models = {}
+        # Auto-populate configured_models with the active provider's default model
+        configured_models = {}
         creds = self.get_provider_credentials(workspace_id, active_provider)
-        if creds and creds.get("model"):
-            current_models[active_provider] = creds["model"]
+        default_model = creds.get("model") if creds else None
+        if default_model:
+            configured_models[active_provider] = [default_model]
 
         for agent_id in agent_ids:
             existing = self.get_configuration(workspace_id, agent_id)
@@ -567,21 +670,16 @@ class LLMRouterConfigStore:
                     workspace_id=workspace_id,
                     agent_id=agent_id,
                     configured_providers=defaults,
+                    configured_models=configured_models or None,
                     current_provider=active_provider,
-                    current_models=current_models or None,
+                    current_model=default_model,
                     user_id=user_id,
                 )
             )
         return created
 
     def delete_workspace_configurations(self, workspace_id: int, user_id: Optional[int] = None) -> int:
-        """Hard-delete the entire workspace document from llm_configs.workspace_configs.
-
-        When a workspace is deleted, there is no reason to keep a soft-deleted
-        config document around — remove it entirely so that:
-        1. One workspace always has at most one document.
-        2. Redeployments against a fresh or different MongoDB don't accumulate orphans.
-        """
+        """Hard-delete the entire workspace document from llm_configs.workspace_configs."""
         result = self._get_collection().delete_one({"workspace_id": workspace_id})
         deleted = result.deleted_count
         if deleted:
