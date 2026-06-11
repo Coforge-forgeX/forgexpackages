@@ -187,6 +187,52 @@ class LLMRouterConfigStore:
                 providers.append(creds)
         return providers
 
+    def resolve_deployment_name(self, workspace_id: int, provider: str, model_name: str) -> str:
+        """
+        Resolve Azure deployment name from model name.
+        
+        For Azure OpenAI, deployment_name is the actual deployment identifier,
+        while model_name is the logical model identifier. This method maps
+        between them using the available_models configuration.
+        
+        Args:
+            workspace_id: Workspace ID
+            provider: Provider name (should be 'azure' for this to matter)
+            model_name: Logical model name (e.g., 'gpt-4')
+            
+        Returns:
+            Deployment name for Azure, or model_name for other providers
+        """
+        if provider.lower().strip() != "azure":
+            return model_name
+        
+        creds = self.get_provider_credentials(workspace_id, provider)
+        if not creds:
+            logger.warning(f"No credentials found for provider '{provider}' in workspace {workspace_id}")
+            return model_name
+            
+        available_models = creds.get("available_models", [])
+        
+        # Look for exact model_name match in available_models
+        for model_entry in available_models:
+            if model_entry.get("model_name") == model_name:
+                deployment_name = model_entry.get("deployment_name")
+                if deployment_name:
+                    logger.debug(f"Resolved model '{model_name}' to deployment '{deployment_name}' for workspace {workspace_id}")
+                    return deployment_name
+                break
+        
+        # Fallback: check if model_name matches the top-level model
+        if creds.get("model") == model_name:
+            deployment_name = creds.get("deployment_name")
+            if deployment_name:
+                logger.debug(f"Using top-level deployment '{deployment_name}' for model '{model_name}' in workspace {workspace_id}")
+                return deployment_name
+        
+        # Final fallback: use model_name as deployment_name
+        logger.debug(f"No deployment mapping found for model '{model_name}' in workspace {workspace_id}, using model name as deployment")
+        return model_name
+
     def build_config_dict(self, workspace_id: int, provider_name: str, model_override: Optional[str] = None) -> Optional[Dict[str, Any]]:
         creds = self.get_provider_credentials(workspace_id, provider_name)
         if not creds:
@@ -195,16 +241,8 @@ class LLMRouterConfigStore:
         provider = provider_name.lower().strip()
         model = model_override or creds["model"]
 
-        # Resolve deployment_name for the overridden model
-        deployment_name = model
-        if model_override:
-            available_models = creds.get("available_models") or []
-            for m in available_models:
-                if m["model_name"] == model_override:
-                    deployment_name = m.get("deployment_name") or model_override
-                    break
-        else:
-            deployment_name = creds.get("deployment_name") or model
+        # Use the new deployment name resolution method
+        deployment_name = self.resolve_deployment_name(workspace_id, provider, model)
 
         config = {
             "provider_name": provider,

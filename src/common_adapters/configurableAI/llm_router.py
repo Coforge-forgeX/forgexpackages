@@ -111,8 +111,10 @@ def get_configured_llm_manager(
     """
     key = _cache_key(workspace_id, agent_id)
     if key in _manager_cache:
+        logger.debug(f"Returning cached LLM manager for workspace {workspace_id}, agent {agent_id}")
         return _manager_cache[key]
 
+    logger.debug(f"Creating new LLM manager for workspace {workspace_id}, agent {agent_id}")
     manager = ConfigurableAIManager()
     config = llm_router_config_store.get_effective_configuration(workspace_id, agent_id)
 
@@ -135,6 +137,8 @@ def get_configured_llm_manager(
     current_provider = config.get("current_provider")
     current_model = config.get("current_model")
 
+    successfully_configured_providers = []
+    
     for provider in configured_providers:
         # Use current_model for the active provider; for other providers use their first configured model
         if provider == current_provider and current_model:
@@ -144,22 +148,38 @@ def get_configured_llm_manager(
             configured_models = config.get("configured_models") or {}
             provider_models = configured_models.get(provider) or []
             model_override = provider_models[0] if provider_models else None
+        
+        # Build config dict with enhanced deployment name resolution
         creds_dict = llm_router_config_store.build_config_dict(workspace_id, provider, model_override=model_override)
         if creds_dict:
             try:
                 manager.configure_provider(provider, creds_dict)
+                successfully_configured_providers.append(provider)
+                logger.debug(f"Successfully configured provider '{provider}' for workspace {workspace_id}")
             except Exception as e:
-                logger.warning(f"Could not configure provider '{provider}': {e}")
+                logger.warning(f"Could not configure provider '{provider}' for workspace {workspace_id}: {e}")
         else:
             logger.warning(f"No credentials found for provider '{provider}' in workspace {workspace_id}")
 
-    if current_provider and current_provider in manager.list_configured_providers():
+    # Set current provider only if it was successfully configured
+    if current_provider and current_provider in successfully_configured_providers:
         try:
             manager.set_current_provider(current_provider)
+            logger.debug(f"Set current provider to '{current_provider}' for workspace {workspace_id}, agent {agent_id}")
         except Exception as e:
-            logger.warning(f"Could not set current provider '{current_provider}': {e}")
+            logger.warning(f"Could not set current provider '{current_provider}' for workspace {workspace_id}: {e}")
+    elif successfully_configured_providers:
+        # Fallback to first successfully configured provider
+        fallback_provider = successfully_configured_providers[0]
+        try:
+            manager.set_current_provider(fallback_provider)
+            logger.info(f"Current provider '{current_provider}' not available, using fallback '{fallback_provider}' for workspace {workspace_id}")
+        except Exception as e:
+            logger.warning(f"Could not set fallback provider '{fallback_provider}' for workspace {workspace_id}: {e}")
 
+    # Cache the configured manager
     _manager_cache[key] = manager
+    logger.debug(f"Cached LLM manager for workspace {workspace_id}, agent {agent_id} with {len(successfully_configured_providers)} providers")
     return manager
 
 
@@ -168,7 +188,10 @@ def invalidate_llm_cache(
     agent_id: Optional[int] = None,
 ) -> None:
     """
-    Invalidate cached LLM managers after configuration changes.
+    Enhanced cache invalidation with proper workspace isolation.
+    
+    This function ensures that cache invalidation respects workspace boundaries
+    and properly handles both agent-specific and workspace-wide cache clearing.
 
     Args:
         workspace_id: Clear cache for this workspace. None = clear all.
@@ -177,18 +200,41 @@ def invalidate_llm_cache(
     global _manager_cache
 
     if workspace_id is None:
+        # Clear all caches globally
         _manager_cache.clear()
         clear_ai_manager_cache()
-        logger.info("Cleared all LLM manager cache")
+        logger.info("Cleared all LLM manager cache globally")
         return
 
+    # Workspace-specific cache invalidation
     if agent_id is not None:
+        # Clear cache for specific workspace-agent combination
         key = _cache_key(workspace_id, agent_id)
-        _manager_cache.pop(key, None)
+        removed = _manager_cache.pop(key, None)
+        if removed:
+            logger.info(f"Cleared LLM manager cache for workspace {workspace_id}, agent {agent_id}")
+        else:
+            logger.debug(f"No cache entry found for workspace {workspace_id}, agent {agent_id}")
     else:
+        # Clear all cache entries for the entire workspace
         keys_to_remove = [k for k in _manager_cache if k.startswith(f"ws_{workspace_id}_")]
+        removed_count = 0
         for k in keys_to_remove:
             del _manager_cache[k]
+            removed_count += 1
+        
+        if removed_count > 0:
+            logger.info(f"Cleared {removed_count} LLM manager cache entries for workspace {workspace_id}")
+        else:
+            logger.debug(f"No cache entries found for workspace {workspace_id}")
 
-    clear_ai_manager_cache(workspace_id=workspace_id, agent_id=agent_id)
-    logger.info(f"Cleared LLM manager cache for workspace {workspace_id}, agent {agent_id}")
+    # Clear provider-level cache for the workspace
+    # This ensures that any provider-specific caching is also invalidated
+    try:
+        clear_ai_manager_cache(workspace_id=workspace_id, agent_id=agent_id)
+    except Exception as e:
+        logger.warning(f"Failed to clear AI manager cache for workspace {workspace_id}, agent {agent_id}: {e}")
+    
+    # Log cache state for debugging
+    remaining_entries = len(_manager_cache)
+    logger.debug(f"LLM cache invalidation complete. Remaining cache entries: {remaining_entries}")

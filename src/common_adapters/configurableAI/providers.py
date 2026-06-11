@@ -247,7 +247,7 @@ class ProviderRegistry:
         "openai": OpenAIProvider,
         "gcp": GCPProvider,
         "azure": AzureOpenAIProvider,
-        "quasar": QuasarProvider,
+        "quasar": QuasarProvider
     }
     
     @classmethod
