@@ -2,11 +2,14 @@
 ConfigurableAI Manager - Main interface for AI provider switching.
 """
 
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List, Union, Sequence
 import logging
 import os
 import json
 import asyncio
+import re
+import uuid
+from langchain_core.messages import AIMessage
 from .providers import ProviderRegistry, BaseAIProvider
 from .config import (
     AIProviderConfig, 
@@ -17,6 +20,159 @@ from .config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class ToolBoundConfigurableAIAdapter:
+    """
+    LangChain-compatible wrapper returned by ConfigurableAIManager.bind_tools().
+    """
+
+    def __init__(
+        self,
+        manager: "ConfigurableAIManager",
+        tools: List[Any],
+        *,
+        system_prompt: Optional[str] = None,
+    ) -> None:
+        self._manager = manager
+        self._tools = tools
+        self._system_prompt = system_prompt
+
+    @staticmethod
+    def _tool_name(tool_obj: Any) -> str:
+        return getattr(tool_obj, "name", None) or getattr(tool_obj, "__name__", "tool")
+
+    @staticmethod
+    def _tool_desc(tool_obj: Any) -> str:
+        doc = getattr(tool_obj, "description", None) or getattr(tool_obj, "__doc__", "")
+        return (doc or "").strip().split(":param")[0].strip()
+
+    def _build_tool_protocol(self) -> str:
+        lines: List[str] = []
+        for idx, tool_obj in enumerate(self._tools, start=1):
+            name = self._tool_name(tool_obj)
+            desc = self._tool_desc(tool_obj)
+            lines.append(f"{idx}. {name}: {desc}" if desc else f"{idx}. {name}")
+        tools_desc = "\n".join(lines)
+
+        base = self._system_prompt or "You are an assistant with access to callable tools."
+        return (
+            f"{base}\n\n"
+            "TOOLS\n"
+            "-----\n"
+            f"{tools_desc}\n\n"
+            "RESPONSE FORMAT\n"
+            "---------------\n"
+            "Reply with exactly one minified JSON object and nothing else.\n"
+            "1) Tool call:\n"
+            '{"tool_call":{"name":"<tool_name>","arguments":{}}}\n'
+            "2) Final answer:\n"
+            '{"final":"<message>"}\n\n'
+            "RULES\n"
+            "-----\n"
+            "- Use only one top-level key: tool_call or final.\n"
+            "- Keep JSON valid (no markdown/code fences/comments).\n"
+            "- Use exact tool names from the list when calling a tool."
+        )
+
+    @staticmethod
+    def _extract_json_object(text: str) -> Optional[dict]:
+        if not text:
+            return None
+        cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
+        try:
+            return json.loads(cleaned)
+        except Exception:
+            pass
+
+        match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+        if not match:
+            return None
+        try:
+            return json.loads(match.group(0))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _to_langchain_messages(messages: List[Any]) -> List[Dict[str, str]]:
+        normalized: List[Dict[str, str]] = []
+        for message in messages:
+            if isinstance(message, dict):
+                role = message.get("role", "user")
+                content = message.get("content", "")
+                if role not in ("system", "user", "assistant"):
+                    role = "user"
+                normalized.append({"role": role, "content": str(content)})
+                continue
+
+            if hasattr(message, "type") and hasattr(message, "content"):
+                msg_type = message.type
+                content = str(message.content)
+                if msg_type == "system":
+                    normalized.append({"role": "system", "content": content})
+                elif msg_type in ("human", "user"):
+                    normalized.append({"role": "user", "content": content})
+                elif msg_type == "ai":
+                    normalized.append({"role": "assistant", "content": content})
+                elif msg_type == "tool":
+                    tool_name = getattr(message, "name", "tool")
+                    normalized.append({"role": "user", "content": f"[Tool result from {tool_name}] {content}"})
+                else:
+                    normalized.append({"role": "user", "content": content})
+                continue
+
+            normalized.append({"role": "user", "content": str(message)})
+        return normalized
+
+    async def ainvoke(self, messages: List[Any]) -> AIMessage:
+        protocol = self._build_tool_protocol()
+        request_messages = [{"role": "system", "content": protocol}]
+        request_messages.extend(self._to_langchain_messages(messages))
+
+        prompt_parts = []
+        for msg in request_messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            prompt_parts.append(f"{role.upper()}: {content}")
+        prompt = "\n\n".join(prompt_parts)
+
+        text = await self._manager.generate_text_async(prompt)
+        data = self._extract_json_object(text)
+
+        if isinstance(data, dict) and isinstance(data.get("tool_call"), dict):
+            tool_call = data["tool_call"]
+            name = tool_call.get("name")
+            args = tool_call.get("arguments", {})
+            if isinstance(name, str) and isinstance(args, dict):
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": f"call_{uuid.uuid4().hex[:16]}",
+                            "name": name,
+                            "args": args,
+                        }
+                    ],
+                )
+
+        if isinstance(data, dict) and isinstance(data.get("final"), str):
+            return AIMessage(content=data["final"])
+
+        return AIMessage(content=text)
+
+    # Returns string response for consistency with ConfigurableAIManager
+    async def generate_text_async(self, messages: List[Any]) -> str:
+        """
+        Generate text with tools support - returns string response.
+        
+        Args:
+            messages: List of message objects.
+            
+        Returns:
+            Generated text string (extracted from final answer or raw text).
+        """
+        result = await self.ainvoke(messages)
+        return result.content if hasattr(result, 'content') else str(result)
 
 
 class ConfigurableAIManager:
@@ -200,7 +356,6 @@ class ConfigurableAIManager:
             loop = asyncio.get_running_loop()
             # If we're in an event loop, we need to use a different approach
             import concurrent.futures
-            import threading
             
             def run_in_thread():
                 # Create a new event loop in a separate thread
@@ -262,7 +417,6 @@ class ConfigurableAIManager:
             loop = asyncio.get_running_loop()
             # If we're in an event loop, we need to use a different approach
             import concurrent.futures
-            import threading
             
             def run_in_thread():
                 # Create a new event loop in a separate thread
@@ -321,6 +475,27 @@ class ConfigurableAIManager:
             return QuasarConfig(**config_dict)
         else:
             return AIProviderConfig.from_dict(config_dict)
+
+    def bind_tools(
+        self,
+        tools: Sequence[Any],
+        *,
+        system_prompt: Optional[str] = None,
+    ) -> ToolBoundConfigurableAIAdapter:
+        """
+        Provider-agnostic tool binding helper.
+
+        Returns a runnable exposing .ainvoke(messages) that emits AIMessage with
+        tool_calls compatible with ToolNode consumers.
+
+        Args:
+            tools: List of tool objects to bind.
+            system_prompt: Optional system prompt override.
+
+        Returns:
+            ToolBoundConfigurableAIAdapter instance.
+        """
+        return ToolBoundConfigurableAIAdapter(self, list(tools), system_prompt=system_prompt)
 
 
 # Convenience function for quick setup (env-var based, no persistence)

@@ -9,7 +9,13 @@ LLM configuration, so any agent can use the configured LLM without
 depending on kbcurator.
 """
 
-from .manager import ConfigurableAIManager, get_ai_manager, clear_ai_manager_cache, get_cached_manager_count
+from .manager import (
+    ConfigurableAIManager,
+    ToolBoundConfigurableAIAdapter,
+    get_ai_manager,
+    clear_ai_manager_cache,
+    get_cached_manager_count,
+)
 from .config import (
     AIProviderConfig,
     OpenAIConfig,
@@ -29,6 +35,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "ConfigurableAIManager",
+    "ToolBoundConfigurableAIAdapter",
     "get_ai_manager",
     "clear_ai_manager_cache",
     "get_cached_manager_count",
