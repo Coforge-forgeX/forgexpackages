@@ -587,6 +587,69 @@ class LLMRouterConfigStore:
             user_id=user_id,
         )
 
+    def remove_model_from_agent(
+        self,
+        workspace_id: int,
+        provider: str,
+        model: str,
+        agent_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Remove a specific model from an agent's configured_models for a provider."""
+        selected = provider.lower().strip()
+        cfg = self.get_configuration(workspace_id, agent_id)
+        
+        if not cfg:
+            logger.warning(f"No configuration found for workspace {workspace_id}, agent {agent_id}")
+            return {}
+
+        providers = list(cfg.get("configured_providers") or [])
+        configured_models = dict(cfg.get("configured_models") or {})
+        current_provider = cfg.get("current_provider")
+        current_model_val = cfg.get("current_model")
+
+        # Remove model from the provider's model list
+        provider_models = list(configured_models.get(selected) or [])
+        if model in provider_models:
+            provider_models.remove(model)
+            
+        # If no models left for this provider, remove the provider entirely
+        if not provider_models:
+            if selected in providers:
+                providers.remove(selected)
+            if selected in configured_models:
+                del configured_models[selected]
+            
+            # If this was the current provider, switch to another provider
+            if current_provider == selected:
+                if providers:
+                    # Switch to first available provider
+                    current_provider = providers[0]
+                    # Get first model for the new provider
+                    new_provider_models = configured_models.get(current_provider, [])
+                    current_model_val = new_provider_models[0] if new_provider_models else None
+                else:
+                    # No providers left
+                    current_provider = None
+                    current_model_val = None
+        else:
+            # Update the model list for this provider
+            configured_models[selected] = provider_models
+            
+            # If the removed model was the current model, switch to another model
+            if current_provider == selected and current_model_val == model:
+                current_model_val = provider_models[0] if provider_models else None
+
+        return self.create_or_update_configuration(
+            workspace_id=workspace_id,
+            agent_id=agent_id,
+            configured_providers=providers,
+            configured_models=configured_models,
+            current_provider=current_provider,
+            current_model=current_model_val,
+            user_id=user_id,
+        )
+
     def get_workspace_configurations(self, workspace_id: int) -> List[Dict[str, Any]]:
         doc = self._get_workspace_document(workspace_id)
         if not doc:
