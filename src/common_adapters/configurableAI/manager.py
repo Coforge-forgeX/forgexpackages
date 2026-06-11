@@ -33,10 +33,12 @@ class ToolBoundConfigurableAIAdapter:
         tools: List[Any],
         *,
         system_prompt: Optional[str] = None,
+        tool_choice: Optional[Union[str, dict]] = None,
     ) -> None:
         self._manager = manager
         self._tools = tools
         self._system_prompt = system_prompt
+        self._tool_choice = tool_choice
 
     @staticmethod
     def _tool_name(tool_obj: Any) -> str:
@@ -47,6 +49,18 @@ class ToolBoundConfigurableAIAdapter:
         doc = getattr(tool_obj, "description", None) or getattr(tool_obj, "__doc__", "")
         return (doc or "").strip().split(":param")[0].strip()
 
+    def _resolve_tool_choice_name(self) -> Optional[str]:
+        tc = self._tool_choice
+        if tc is None:
+            return None
+        if isinstance(tc, str):
+            return tc
+        if isinstance(tc, dict):
+            fn = tc.get("function") or {}
+            if isinstance(fn, dict):
+                return fn.get("name")
+        return None
+
     def _build_tool_protocol(self) -> str:
         lines: List[str] = []
         for idx, tool_obj in enumerate(self._tools, start=1):
@@ -56,6 +70,19 @@ class ToolBoundConfigurableAIAdapter:
         tools_desc = "\n".join(lines)
 
         base = self._system_prompt or "You are an assistant with access to callable tools."
+
+        forced = self._resolve_tool_choice_name()
+        if forced:
+            base += (
+                f"\n\nIMPORTANT RULE: You MUST call the tool named '{forced}' "
+                "and nothing else. Do not provide a final answer in this turn."
+            )
+        elif self._tool_choice in ("any", "required"):
+            base += (
+                "\n\nIMPORTANT RULE: You MUST call exactly one of the available tools. "
+                "Do not provide a final answer in this turn."
+            )
+
         return (
             f"{base}\n\n"
             "TOOLS\n"
@@ -139,21 +166,28 @@ class ToolBoundConfigurableAIAdapter:
         text = await self._manager.generate_text_async(prompt)
         data = self._extract_json_object(text)
 
+        forced = self._resolve_tool_choice_name()
         if isinstance(data, dict) and isinstance(data.get("tool_call"), dict):
             tool_call = data["tool_call"]
             name = tool_call.get("name")
             args = tool_call.get("arguments", {})
             if isinstance(name, str) and isinstance(args, dict):
-                return AIMessage(
-                    content="",
-                    tool_calls=[
-                        {
-                            "id": f"call_{uuid.uuid4().hex[:16]}",
-                            "name": name,
-                            "args": args,
-                        }
-                    ],
-                )
+                if forced is not None and name != forced:
+                    data["tool_call"]["name"] = forced
+                    data["tool_call"]["arguments"] = {}
+                    name = forced
+                    args = {}
+                if isinstance(name, str) and isinstance(args, dict):
+                    return AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": f"call_{uuid.uuid4().hex[:16]}",
+                                "name": name,
+                                "args": args,
+                            }
+                        ],
+                    )
 
         if isinstance(data, dict) and isinstance(data.get("final"), str):
             return AIMessage(content=data["final"])
@@ -481,6 +515,7 @@ class ConfigurableAIManager:
         tools: Sequence[Any],
         *,
         system_prompt: Optional[str] = None,
+        **kwargs: Any,
     ) -> ToolBoundConfigurableAIAdapter:
         """
         Provider-agnostic tool binding helper.
@@ -491,11 +526,20 @@ class ConfigurableAIManager:
         Args:
             tools: List of tool objects to bind.
             system_prompt: Optional system prompt override.
+            **kwargs: Extra options. Recognized: tool_choice.
 
         Returns:
             ToolBoundConfigurableAIAdapter instance.
         """
-        return ToolBoundConfigurableAIAdapter(self, list(tools), system_prompt=system_prompt)
+        tool_choice = kwargs.pop("tool_choice", None)
+        if kwargs:
+            logger.debug("bind_tools ignoring unsupported kwargs: %s", list(kwargs))
+        return ToolBoundConfigurableAIAdapter(
+            self,
+            list(tools),
+            system_prompt=system_prompt,
+            tool_choice=tool_choice,
+        )
 
 
 # Convenience function for quick setup (env-var based, no persistence)
