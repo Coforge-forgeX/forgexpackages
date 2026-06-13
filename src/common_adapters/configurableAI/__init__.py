@@ -12,9 +12,7 @@ depending on kbcurator.
 from .manager import ConfigurableAIManager, get_ai_manager, clear_ai_manager_cache, get_cached_manager_count
 from .config import (
     AIProviderConfig,
-    OpenAIConfig,
     AzureOpenAIConfig,
-    GCPConfig,
     QuasarConfig
 )
 from .providers import BaseAIProvider, ProviderRegistry
@@ -33,9 +31,7 @@ __all__ = [
     "clear_ai_manager_cache",
     "get_cached_manager_count",
     "AIProviderConfig",
-    "OpenAIConfig", 
     "AzureOpenAIConfig",
-    "GCPConfig",
     "QuasarConfig",
     "BaseAIProvider",
     "ProviderRegistry",

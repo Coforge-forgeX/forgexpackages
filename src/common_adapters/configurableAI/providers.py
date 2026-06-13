@@ -1,5 +1,6 @@
 """
 Provider registry and base provider interface.
+Only supports Azure and Quasar providers.
 """
 
 from abc import ABC, abstractmethod
@@ -31,99 +32,6 @@ class BaseAIProvider(ABC):
     def validate_config(self) -> bool:
         """Validate the provider configuration."""
         pass
-
-
-class OpenAIProvider(BaseAIProvider):
-    """OpenAI provider implementation."""
-    
-    def __init__(self, config: AIProviderConfig):
-        super().__init__(config)
-        self._client = None
-        
-    def _get_client(self):
-        """Lazy initialization of OpenAI client."""
-        if self._client is None:
-            try:
-                import openai
-                self._client = openai.OpenAI(
-                    api_key=self.config.api_key,
-                    base_url=self.config.endpoint,
-                    organization=getattr(self.config, 'organization', None)
-                )
-            except ImportError:
-                raise ImportError("openai package is required for OpenAI provider")
-        return self._client
-    
-    async def generate_text(self, prompt: str, **kwargs) -> str:
-        """Generate text using OpenAI."""
-        client = self._get_client()
-        
-        response = await client.chat.completions.create(
-            model=self.config.model or "gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            **kwargs
-        )
-        
-        return response.choices[0].message.content
-    
-    async def generate_embeddings(self, texts: List[str], **kwargs) -> List[List[float]]:
-        """Generate embeddings using OpenAI."""
-        client = self._get_client()
-        
-        response = await client.embeddings.create(
-            model=kwargs.get('embedding_model', 'text-embedding-ada-002'),
-            input=texts
-        )
-        
-        return [data.embedding for data in response.data]
-    
-    def validate_config(self) -> bool:
-        """Validate OpenAI configuration."""
-        return bool(self.config.api_key)
-
-
-class GCPProvider(BaseAIProvider):
-    """Google Cloud Platform AI provider implementation."""
-    
-    def __init__(self, config: AIProviderConfig):
-        super().__init__(config)
-        self._client = None
-        
-    def _get_client(self):
-        """Lazy initialization of GCP client."""
-        if self._client is None:
-            try:
-                from google.cloud import aiplatform
-                aiplatform.init(
-                    project=getattr(self.config, 'project_id', None),
-                    location=getattr(self.config, 'location', 'us-central1')
-                )
-                self._client = aiplatform
-            except ImportError:
-                raise ImportError("google-cloud-aiplatform package is required for GCP provider")
-        return self._client
-    
-    async def generate_text(self, prompt: str, **kwargs) -> str:
-        """Generate text using GCP Vertex AI."""
-        client = self._get_client()
-        
-        # Implementation would depend on specific GCP AI service
-        # This is a placeholder implementation
-        logger.warning("GCP text generation not fully implemented")
-        return f"GCP response for: {prompt[:50]}..."
-    
-    async def generate_embeddings(self, texts: List[str], **kwargs) -> List[List[float]]:
-        """Generate embeddings using GCP."""
-        client = self._get_client()
-        
-        # Implementation would depend on specific GCP embedding service
-        # This is a placeholder implementation
-        logger.warning("GCP embeddings not fully implemented")
-        return [[0.0] * 768 for _ in texts]  # Placeholder
-    
-    def validate_config(self) -> bool:
-        """Validate GCP configuration."""
-        return bool(getattr(self.config, 'project_id', None))
 
 
 class AzureOpenAIProvider(BaseAIProvider):
@@ -241,11 +149,9 @@ class QuasarProvider(BaseAIProvider):
 
 
 class ProviderRegistry:
-    """Registry for AI providers."""
+    """Registry for AI providers. Only supports Azure and Quasar."""
     
     _providers: Dict[str, Type[BaseAIProvider]] = {
-        "openai": OpenAIProvider,
-        "gcp": GCPProvider,
         "azure": AzureOpenAIProvider,
         "quasar": QuasarProvider
     }

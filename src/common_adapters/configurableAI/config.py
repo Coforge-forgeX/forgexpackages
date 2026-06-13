@@ -1,5 +1,6 @@
 """
 Configuration classes for AI providers.
+Only supports Azure and Quasar providers.
 """
 
 from typing import Dict, Any, Optional
@@ -42,46 +43,6 @@ class AIProviderConfig:
 
 
 @dataclass
-class OpenAIConfig(AIProviderConfig):
-    """OpenAI specific configuration."""
-    organization: Optional[str] = None
-    
-    @classmethod
-    def from_env(cls) -> "OpenAIConfig":
-        """Create OpenAI configuration from environment variables."""
-        base_config = super().from_env("openai")
-        return cls(
-            provider_name="openai",
-            api_key=base_config.api_key,
-            endpoint=base_config.endpoint,
-            model=base_config.model or "gpt-3.5-turbo",
-            organization=os.getenv("OPENAI_ORGANIZATION"),
-            extra_params=base_config.extra_params
-        )
-
-
-@dataclass 
-class GCPConfig(AIProviderConfig):
-    """Google Cloud Platform AI configuration."""
-    project_id: Optional[str] = None
-    location: Optional[str] = None
-    
-    @classmethod
-    def from_env(cls) -> "GCPConfig":
-        """Create GCP configuration from environment variables."""
-        base_config = super().from_env("gcp")
-        return cls(
-            provider_name="gcp",
-            api_key=base_config.api_key,
-            endpoint=base_config.endpoint,
-            model=base_config.model or "text-bison",
-            project_id=os.getenv("GCP_PROJECT_ID"),
-            location=os.getenv("GCP_LOCATION", "us-central1"),
-            extra_params=base_config.extra_params
-        )
-
-
-@dataclass
 class AzureOpenAIConfig(AIProviderConfig):
     """Azure OpenAI configuration."""
     deployment_name: Optional[str] = None
@@ -96,7 +57,7 @@ class AzureOpenAIConfig(AIProviderConfig):
         api_key = os.getenv("AZURE_OPENAI_LLM_MODEL_API_KEY")
         endpoint = os.getenv("AZURE_OPENAI_LLM_MODEL_API_BASE")
         model = os.getenv("AZURE_OPENAI_LLM_MODEL_LLM_MODEL")
-        api_version = os.getenv("AZURE_OPENAI_LLM_MODEL_API_VERSION", "2023-12-01-preview")
+        api_version = os.getenv("AZURE_OPENAI_LLM_MODEL_API_VERSION", "2024-12-01-preview")
         
         logger.info(f"Azure config from env - API Key: {'***' if api_key else 'None'}, Endpoint: {endpoint}, Model: {model}, Version: {api_version}")
         
