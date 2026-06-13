@@ -34,11 +34,17 @@ class ToolBoundConfigurableAIAdapter:
         *,
         system_prompt: Optional[str] = None,
         tool_choice: Optional[Union[str, dict]] = None,
+        strict: Optional[bool] = None,
+        parallel_tool_calls: Optional[bool] = None,
+        response_format: Optional[dict] = None,
     ) -> None:
         self._manager = manager
         self._tools = tools
         self._system_prompt = system_prompt
         self._tool_choice = tool_choice
+        self._strict = strict
+        self._parallel_tool_calls = parallel_tool_calls
+        self._response_format = response_format
 
     @staticmethod
     def _tool_name(tool_obj: Any) -> str:
@@ -512,34 +518,112 @@ class ConfigurableAIManager:
 
     def bind_tools(
         self,
-        tools: Sequence[Any],
+        tools: Sequence[Union[dict, type, Any]],
         *,
+        tool_choice: Optional[Union[dict, str, bool]] = None,
+        strict: Optional[bool] = None,
+        parallel_tool_calls: Optional[bool] = None,
+        response_format: Optional[dict] = None,
         system_prompt: Optional[str] = None,
         **kwargs: Any,
     ) -> ToolBoundConfigurableAIAdapter:
         """
-        Provider-agnostic tool binding helper.
+        Bind tool-like objects to this chat model.
 
-        Returns a runnable exposing .ainvoke(messages) that emits AIMessage with
-        tool_calls compatible with ToolNode consumers.
+        Assumes model is compatible with OpenAI tool-calling API.
 
         Args:
-            tools: List of tool objects to bind.
+            tools: A list of tool definitions to bind to this chat model.
+            tool_choice: Which tool to require the model to call. Options are:
+                - `str` of the form `'<<tool_name>>'`: calls `<<tool_name>>` tool.
+                - `'auto'`: automatically selects a tool (including no tool).
+                - `'none'`: does not call a tool.
+                - `'any'` or `'required'` or `True`: force at least one tool to be called.
+                - `dict` of the form `{"type": "function", "function": {"name": <<tool_name>>}}`: calls `<<tool_name>>` tool.
+                - `False` or `None`: no effect, default behavior.
+            strict: If `True`, model output is guaranteed to exactly match the JSON Schema
+                provided in the tool definition.
+            parallel_tool_calls: Set to `False` to disable parallel tool use.
+                Defaults to `None` (no specification, which allows parallel tool use).
+            response_format: Optional schema to format model response.
             system_prompt: Optional system prompt override.
-            **kwargs: Extra options. Recognized: tool_choice.
+            **kwargs: Any additional parameters.
 
         Returns:
             ToolBoundConfigurableAIAdapter instance.
         """
-        tool_choice = kwargs.pop("tool_choice", None)
-        if kwargs:
-            logger.debug("bind_tools ignoring unsupported kwargs: %s", list(kwargs))
+        # Process tool_choice similar to LangChain
+        processed_tool_choice = self._process_tool_choice(tool_choice, tools)
+        
+        # Handle parallel_tool_calls
+        if parallel_tool_calls is not None:
+            kwargs["parallel_tool_calls"] = parallel_tool_calls
+            
+        # Handle strict mode
+        if strict is not None:
+            kwargs["strict"] = strict
+            
+        # Handle response_format
+        if response_format is not None:
+            kwargs["response_format"] = response_format
+        
+        # Log unsupported kwargs
+        unsupported = [k for k in kwargs if k not in ["parallel_tool_calls", "strict", "response_format"]]
+        if unsupported:
+            logger.debug("bind_tools ignoring unsupported kwargs: %s", unsupported)
+            
         return ToolBoundConfigurableAIAdapter(
             self,
             list(tools),
             system_prompt=system_prompt,
-            tool_choice=tool_choice,
+            tool_choice=processed_tool_choice,
+            strict=strict,
+            parallel_tool_calls=parallel_tool_calls,
+            response_format=response_format,
         )
+    
+    def _process_tool_choice(self, tool_choice: Optional[Union[dict, str, bool]], tools: Sequence[Any]) -> Optional[Union[dict, str]]:
+        """Process tool_choice parameter similar to LangChain implementation."""
+        if not tool_choice:
+            return tool_choice
+            
+        # Get tool names for validation
+        tool_names = []
+        for tool in tools:
+            if hasattr(tool, 'name'):
+                tool_names.append(tool.name)
+            elif hasattr(tool, '__name__'):
+                tool_names.append(tool.__name__)
+            elif isinstance(tool, dict) and 'function' in tool:
+                tool_names.append(tool['function'].get('name', ''))
+            elif isinstance(tool, dict) and 'name' in tool:
+                tool_names.append(tool['name'])
+        
+        if isinstance(tool_choice, str):
+            # tool_choice is a tool/function name
+            if tool_choice in tool_names:
+                return {
+                    "type": "function",
+                    "function": {"name": tool_choice},
+                }
+            # 'any' is not natively supported by OpenAI API.
+            # We support 'any' since other models use this instead of 'required'.
+            elif tool_choice == "any":
+                return "required"
+            elif tool_choice in ["auto", "none", "required"]:
+                return tool_choice
+            else:
+                # Unknown string, pass through
+                return tool_choice
+        elif isinstance(tool_choice, bool):
+            return "required" if tool_choice else None
+        elif isinstance(tool_choice, dict):
+            return tool_choice
+        else:
+            raise ValueError(
+                f"Unrecognized tool_choice type. Expected str, bool or dict. "
+                f"Received: {tool_choice}"
+            )
 
 
 # Convenience function for quick setup (env-var based, no persistence)
