@@ -413,9 +413,13 @@ class LLMRouterConfigStore:
 
         # Merge configured_models: keep existing, override with provided
         models_map = dict((existing or {}).get("configured_models") or {})
+        print(f"DEBUG create_or_update: existing models_map: {models_map}")
+        print(f"DEBUG create_or_update: provided configured_models: {configured_models}")
+        
         if configured_models is not None:
-            for prov, model_list in configured_models.items():
-                models_map[prov] = list(model_list)
+            # Completely replace with the provided configured_models
+            models_map = dict(configured_models)
+            print(f"DEBUG create_or_update: updated models_map: {models_map}")
 
         # Resolve current_model
         resolved_model = current_model
@@ -613,11 +617,17 @@ class LLMRouterConfigStore:
 
         # Remove model from the provider's model list
         provider_models = list(configured_models.get(selected) or [])
+        print(f"DEBUG remove_model_from_agent: provider_models before: {provider_models}")
+        print(f"DEBUG remove_model_from_agent: model to remove: {model}")
+        print(f"DEBUG remove_model_from_agent: model in provider_models: {model in provider_models}")
+        
         if model in provider_models:
             provider_models.remove(model)
+            print(f"DEBUG remove_model_from_agent: provider_models after removal: {provider_models}")
             
         # If no models left for this provider, remove the provider entirely
         if not provider_models:
+            print(f"DEBUG remove_model_from_agent: No models left, removing provider {selected}")
             if selected in providers:
                 providers.remove(selected)
             if selected in configured_models:
@@ -637,13 +647,18 @@ class LLMRouterConfigStore:
                     current_model_val = None
         else:
             # Update the model list for this provider
+            print(f"DEBUG remove_model_from_agent: Updating configured_models[{selected}] = {provider_models}")
             configured_models[selected] = provider_models
             
             # If the removed model was the current model, switch to another model
             if current_provider == selected and current_model_val == model:
                 current_model_val = provider_models[0] if provider_models else None
+                print(f"DEBUG remove_model_from_agent: Switched current_model to: {current_model_val}")
 
-        return self.create_or_update_configuration(
+        print(f"DEBUG remove_model_from_agent: Final configured_models to save: {configured_models}")
+        print(f"DEBUG remove_model_from_agent: Final providers to save: {providers}")
+        
+        result = self.create_or_update_configuration(
             workspace_id=workspace_id,
             agent_id=agent_id,
             configured_providers=providers,
@@ -652,6 +667,9 @@ class LLMRouterConfigStore:
             current_model=current_model_val,
             user_id=user_id,
         )
+        
+        print(f"DEBUG remove_model_from_agent: Result configured_models: {result.get('configured_models')}")
+        return result
 
     def get_workspace_configurations(self, workspace_id: int) -> List[Dict[str, Any]]:
         doc = self._get_workspace_document(workspace_id)
