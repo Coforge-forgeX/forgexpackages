@@ -10,8 +10,6 @@ import asyncio
 from .providers import ProviderRegistry, BaseAIProvider
 from .config import (
     AIProviderConfig, 
-    OpenAIConfig, 
-    GCPConfig, 
     AzureOpenAIConfig,
     QuasarConfig
 )
@@ -84,15 +82,12 @@ class ConfigurableAIManager:
         
         try:
             # Create config from environment
-            if provider_name == "openai":
-                config = OpenAIConfig.from_env()
-            elif provider_name == "gcp":
-                config = GCPConfig.from_env()
-            elif provider_name == "azure":
+            if provider_name == "azure":
                 config = AzureOpenAIConfig.from_env()
             elif provider_name == "quasar":
                 config = QuasarConfig.from_env()
             else:
+                logger.warning(f"Unknown provider type: {provider_name}, using generic config")
                 config = AIProviderConfig.from_env(provider_name)
             
             logger.info(f"Created {provider_name} config: api_key={'***' if config.api_key else 'None'}, endpoint={config.endpoint}, model={config.model}")
@@ -311,11 +306,7 @@ class ConfigurableAIManager:
         """Create appropriate config object from dictionary."""
         config_dict['provider_name'] = provider_name
         
-        if provider_name == "openai":
-            return OpenAIConfig(**config_dict)
-        elif provider_name == "gcp":
-            return GCPConfig(**config_dict)
-        elif provider_name == "azure":
+        if provider_name == "azure":
             return AzureOpenAIConfig(**config_dict)
         elif provider_name == "quasar":
             return QuasarConfig(**config_dict)
