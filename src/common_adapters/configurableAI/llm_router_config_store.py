@@ -571,6 +571,9 @@ class LLMRouterConfigStore:
             provider_models.append(model)
         configured_models[selected] = provider_models
 
+        # Also ensure the model is in the provider's available_models list
+        self._ensure_model_in_provider_available_models(workspace_id, selected, model)
+
         current_provider = (cfg or {}).get("current_provider")
         current_model_val = (cfg or {}).get("current_model")
         if set_as_current:
@@ -864,6 +867,42 @@ class LLMRouterConfigStore:
             return []
         assignments = existing.get("model_assignments") or {}
         return assignments.get(model_name) or []
+
+    def _ensure_model_in_provider_available_models(
+        self,
+        workspace_id: int,
+        provider: str,
+        model: str,
+    ) -> None:
+        """Ensure a model is in the provider's available_models list."""
+        existing = self.get_provider_credentials(workspace_id, provider)
+        if not existing:
+            return
+        
+        available_models = existing.get("available_models") or []
+        
+        # Check if model already exists
+        if any(m.get("model_name") == model for m in available_models):
+            return
+        
+        # Add the model to available_models
+        available_models.append({
+            "model_name": model,
+            "deployment_name": model
+        })
+        
+        # Update the provider credentials
+        now = self._utcnow()
+        self._get_collection().update_one(
+            {"workspace_id": workspace_id},
+            {
+                "$set": {
+                    f"provider_credentials.{provider}.available_models": available_models,
+                    f"provider_credentials.{provider}.updated_at": now,
+                    "updated_at": now,
+                }
+            },
+        )
 
 
 llm_router_config_store = LLMRouterConfigStore()

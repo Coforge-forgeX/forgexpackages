@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "common-adapters"
-version = "2.2.2"
+version = "2.2.3"
 description = "Shared adapter library for AI agents with database persistence"
 requires-python = ">=3.10"
 dependencies = [
