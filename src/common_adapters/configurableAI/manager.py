@@ -37,6 +37,7 @@ class ToolBoundConfigurableAIAdapter:
         strict: Optional[bool] = None,
         parallel_tool_calls: Optional[bool] = None,
         response_format: Optional[dict] = None,
+        **kwargs: Any,
     ) -> None:
         self._manager = manager
         self._tools = tools
@@ -45,6 +46,9 @@ class ToolBoundConfigurableAIAdapter:
         self._strict = strict
         self._parallel_tool_calls = parallel_tool_calls
         self._response_format = response_format
+        
+        # Store additional bound parameters from bind() method
+        self._bound_params = kwargs
 
     @staticmethod
     def _tool_name(tool_obj: Any) -> str:
@@ -213,6 +217,78 @@ class ToolBoundConfigurableAIAdapter:
         """
         result = await self.ainvoke(messages)
         return result.content if hasattr(result, 'content') else str(result)
+
+    def bind(self, **kwargs: Any) -> "ToolBoundConfigurableAIAdapter":
+        """
+        Bind additional parameters to create a new ToolBoundConfigurableAIAdapter.
+        
+        This ensures that both bind() and bind_tools() return the same type,
+        providing a consistent interface for LangChain compatibility.
+        
+        Args:
+            **kwargs: Additional parameters to bind
+            
+        Returns:
+            A new ToolBoundConfigurableAIAdapter with merged parameters
+        """
+        # Merge existing bound parameters with new ones
+        merged_params = self._bound_params.copy()
+        merged_params.update(kwargs)
+        
+        return ToolBoundConfigurableAIAdapter(
+            self._manager,
+            self._tools,
+            system_prompt=self._system_prompt,
+            tool_choice=self._tool_choice,
+            strict=self._strict,
+            parallel_tool_calls=self._parallel_tool_calls,
+            response_format=self._response_format,
+            **merged_params
+        )
+
+    def bind_tools(
+        self,
+        tools: Sequence[Union[dict, type, Any]],
+        *,
+        tool_choice: Optional[Union[dict, str, bool]] = None,
+        strict: Optional[bool] = None,
+        parallel_tool_calls: Optional[bool] = None,
+        response_format: Optional[dict] = None,
+        system_prompt: Optional[str] = None,
+        **kwargs: Any,
+    ) -> "ToolBoundConfigurableAIAdapter":
+        """
+        Bind additional tools to this adapter.
+        
+        Args:
+            tools: Additional tools to bind
+            tool_choice: Tool choice override
+            strict: Strict mode override
+            parallel_tool_calls: Parallel tool calls override
+            response_format: Response format override
+            system_prompt: System prompt override
+            **kwargs: Additional parameters
+            
+        Returns:
+            A new ToolBoundConfigurableAIAdapter with additional tools
+        """
+        # Merge tools
+        merged_tools = list(self._tools) + list(tools)
+        
+        # Merge bound parameters
+        merged_params = self._bound_params.copy()
+        merged_params.update(kwargs)
+        
+        return ToolBoundConfigurableAIAdapter(
+            self._manager,
+            merged_tools,
+            system_prompt=system_prompt or self._system_prompt,
+            tool_choice=tool_choice if tool_choice is not None else self._tool_choice,
+            strict=strict if strict is not None else self._strict,
+            parallel_tool_calls=parallel_tool_calls if parallel_tool_calls is not None else self._parallel_tool_calls,
+            response_format=response_format or self._response_format,
+            **merged_params
+        )
 
 
 class ConfigurableAIManager:
@@ -391,6 +467,12 @@ class ConfigurableAIManager:
         Returns:
             Generated text
         """
+        # Merge bound parameters with kwargs (kwargs take precedence)
+        final_kwargs = {}
+        if hasattr(self, '_bound_params'):
+            final_kwargs.update(self._bound_params)
+        final_kwargs.update(kwargs)
+        
         try:
             # Try to get existing event loop
             loop = asyncio.get_running_loop()
@@ -403,7 +485,7 @@ class ConfigurableAIManager:
                 asyncio.set_event_loop(new_loop)
                 try:
                     return new_loop.run_until_complete(
-                        self.generate_text_async(prompt, provider, **kwargs)
+                        self.generate_text_async(prompt, provider, **final_kwargs)
                     )
                 finally:
                     new_loop.close()
@@ -415,7 +497,7 @@ class ConfigurableAIManager:
                 
         except RuntimeError:
             # No event loop running, safe to use asyncio.run()
-            return asyncio.run(self.generate_text_async(prompt, provider, **kwargs))
+            return asyncio.run(self.generate_text_async(prompt, provider, **final_kwargs))
     
     async def generate_text_async(self, prompt: str, provider: Optional[str] = None, **kwargs) -> str:
         """
@@ -437,8 +519,14 @@ class ConfigurableAIManager:
         if provider_name not in self._providers:
             raise ValueError(f"Provider '{provider_name}' is not configured")
         
+        # Merge bound parameters with kwargs (kwargs take precedence)
+        final_kwargs = {}
+        if hasattr(self, '_bound_params'):
+            final_kwargs.update(self._bound_params)
+        final_kwargs.update(kwargs)
+        
         logger.info(f"Generating text using provider: {provider_name}")
-        return await self._providers[provider_name].generate_text(prompt, **kwargs)
+        return await self._providers[provider_name].generate_text(prompt, **final_kwargs)
     
     def generate_embeddings(self, texts: List[str], provider: Optional[str] = None, **kwargs) -> List[List[float]]:
         """
@@ -582,6 +670,28 @@ class ConfigurableAIManager:
             response_format=response_format,
         )
     
+    def bind(self, **kwargs: Any) -> ToolBoundConfigurableAIAdapter:
+        """
+        Bind arbitrary parameters and return a ToolBoundConfigurableAIAdapter.
+        
+        This method is required for LangChain compatibility, particularly with
+        langchain.agents.create_agent. Returns the same type as bind_tools() to
+        ensure consistent interface.
+        
+        Args:
+            **kwargs: Arbitrary keyword arguments to bind to the manager
+            
+        Returns:
+            A ToolBoundConfigurableAIAdapter instance with bound parameters
+        """
+        # Create a ToolBoundConfigurableAIAdapter with empty tools but bound parameters
+        # This ensures consistent interface with bind_tools()
+        return ToolBoundConfigurableAIAdapter(
+            self,
+            tools=[],  # No tools for general bind()
+            **kwargs
+        )
+
     def _process_tool_choice(self, tool_choice: Optional[Union[dict, str, bool]], tools: Sequence[Any]) -> Optional[Union[dict, str]]:
         """Process tool_choice parameter similar to LangChain implementation."""
         if not tool_choice:
