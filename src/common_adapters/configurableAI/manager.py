@@ -79,37 +79,23 @@ class ToolBoundConfigurableAIAdapter:
             lines.append(f"{idx}. {name}: {desc}" if desc else f"{idx}. {name}")
         tools_desc = "\n".join(lines)
 
-        base = self._system_prompt or "You are an assistant with access to callable tools."
+        base = self._system_prompt or "You are an AI assistant that helps developers generate structured instruction files for building software applications."
 
         forced = self._resolve_tool_choice_name()
         if forced:
-            base += (
-                f"\n\nIMPORTANT RULE: You MUST call the tool named '{forced}' "
-                "and nothing else. Do not provide a final answer in this turn."
-            )
+            base += f"\n\nWhen responding to this request, please use the '{forced}' tool."
         elif self._tool_choice in ("any", "required"):
-            base += (
-                "\n\nIMPORTANT RULE: You MUST call exactly one of the available tools. "
-                "Do not provide a final answer in this turn."
-            )
+            base += "\n\nWhen responding to this request, please select and use one of the available tools."
 
         return (
             f"{base}\n\n"
-            "TOOLS\n"
-            "-----\n"
+            "You have access to the following tools:\n"
             f"{tools_desc}\n\n"
-            "RESPONSE FORMAT\n"
-            "---------------\n"
-            "Reply with exactly one minified JSON object and nothing else.\n"
-            "1) Tool call:\n"
-            '{"tool_call":{"name":"<tool_name>","arguments":{}}}\n'
-            "2) Final answer:\n"
-            '{"final":"<message>"}\n\n'
-            "RULES\n"
-            "-----\n"
-            "- Use only one top-level key: tool_call or final.\n"
-            "- Keep JSON valid (no markdown/code fences/comments).\n"
-            "- Use exact tool names from the list when calling a tool."
+            "When using a tool, respond with the tool name and arguments in this structure:\n"
+            '{"tool_call":{"name":"tool_name","arguments":{}}}\n\n'
+            "When providing a direct response without using tools, use this structure:\n"
+            '{"final":"your message"}\n\n'
+            "Please ensure your response follows valid JSON formatting and uses the exact tool names listed above."
         )
 
     @staticmethod
@@ -163,8 +149,22 @@ class ToolBoundConfigurableAIAdapter:
 
     async def ainvoke(self, messages: List[Any]) -> AIMessage:
         protocol = self._build_tool_protocol()
-        request_messages = [{"role": "system", "content": protocol}]
-        request_messages.extend(self._to_langchain_messages(messages))
+        normalized_messages = self._to_langchain_messages(messages)
+        
+        # Merge all system messages into one to avoid dual SYSTEM blocks
+        system_contents = [protocol]
+        non_system_messages = []
+        
+        for msg in normalized_messages:
+            if msg.get("role") == "system":
+                system_contents.append(msg.get("content", ""))
+            else:
+                non_system_messages.append(msg)
+        
+        # Create single system message with merged content
+        merged_system_content = "\n\n".join(system_contents)
+        request_messages = [{"role": "system", "content": merged_system_content}]
+        request_messages.extend(non_system_messages)
 
         prompt_parts = []
         for msg in request_messages:
