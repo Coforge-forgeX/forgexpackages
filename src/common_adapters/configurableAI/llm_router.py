@@ -99,6 +99,8 @@ def get_configured_llm_manager(
     AZURE_OPENAI_LLM_MODEL_* environment variables so that fresh deployments
     work without manual setup.
 
+    Special case: If agent_id = -1, always return azure provider.
+
     Args:
         workspace_id: Workspace ID (from user's auth context).
         agent_id: Agent ID (your agent's numeric ID in the system).
@@ -109,6 +111,41 @@ def get_configured_llm_manager(
     Raises:
         ValueError: If no LLM is configured and auto-provisioning fails.
     """
+    # Special case: agent_id = -1 should always return azure provider
+    if agent_id == -1:
+        logger.debug(f"Agent ID is -1, returning azure provider for workspace {workspace_id}")
+        manager = ConfigurableAIManager()
+        
+        # Try to get azure provider config from database
+        azure_config = llm_router_config_store.build_config_dict(workspace_id, "azure")
+        if azure_config:
+            try:
+                manager.configure_provider("azure", azure_config)
+                manager.set_current_provider("azure")
+                logger.debug(f"Successfully configured azure provider for agent_id = -1 in workspace {workspace_id}")
+                return manager
+            except Exception as e:
+                logger.warning(f"Failed to configure azure provider for agent_id = -1: {e}")
+        
+        # Fallback: auto-provision azure from environment variables
+        provisioned = _auto_provision_workspace_config(workspace_id)
+        if provisioned:
+            azure_config = llm_router_config_store.build_config_dict(workspace_id, "azure")
+            if azure_config:
+                try:
+                    manager.configure_provider("azure", azure_config)
+                    manager.set_current_provider("azure")
+                    logger.info(f"Auto-provisioned and configured azure provider for agent_id = -1 in workspace {workspace_id}")
+                    return manager
+                except Exception as e:
+                    logger.error(f"Failed to configure auto-provisioned azure provider for agent_id = -1: {e}")
+        
+        raise ValueError(
+            f"Cannot configure azure provider for agent_id = -1 in workspace {workspace_id}. "
+            "Ensure azure provider is configured via admin_configure_llm_provider or set "
+            "AZURE_OPENAI_LLM_MODEL_* environment variables."
+        )
+
     key = _cache_key(workspace_id, agent_id)
     if key in _manager_cache:
         logger.debug(f"Returning cached LLM manager for workspace {workspace_id}, agent {agent_id}")
