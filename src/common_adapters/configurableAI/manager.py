@@ -2,11 +2,14 @@
 ConfigurableAI Manager - Main interface for AI provider switching.
 """
 
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List, Union, Sequence
 import logging
 import os
 import json
 import asyncio
+import re
+import uuid
+from langchain_core.messages import AIMessage
 from .providers import ProviderRegistry, BaseAIProvider
 from .config import (
     AIProviderConfig, 
@@ -15,6 +18,275 @@ from .config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class ToolBoundConfigurableAIAdapter:
+    """
+    LangChain-compatible wrapper returned by ConfigurableAIManager.bind_tools().
+    """
+
+    def __init__(
+        self,
+        manager: "ConfigurableAIManager",
+        tools: List[Any],
+        *,
+        system_prompt: Optional[str] = None,
+        tool_choice: Optional[Union[str, dict]] = None,
+        strict: Optional[bool] = None,
+        parallel_tool_calls: Optional[bool] = None,
+        response_format: Optional[dict] = None,
+        **kwargs: Any,
+    ) -> None:
+        self._manager = manager
+        self._tools = tools
+        self._system_prompt = system_prompt
+        self._tool_choice = tool_choice
+        self._strict = strict
+        self._parallel_tool_calls = parallel_tool_calls
+        self._response_format = response_format
+        
+        # Store additional bound parameters from bind() method
+        self._bound_params = kwargs
+
+    @staticmethod
+    def _tool_name(tool_obj: Any) -> str:
+        return getattr(tool_obj, "name", None) or getattr(tool_obj, "__name__", "tool")
+
+    @staticmethod
+    def _tool_desc(tool_obj: Any) -> str:
+        doc = getattr(tool_obj, "description", None) or getattr(tool_obj, "__doc__", "")
+        return (doc or "").strip().split(":param")[0].strip()
+
+    def _resolve_tool_choice_name(self) -> Optional[str]:
+        tc = self._tool_choice
+        if tc is None:
+            return None
+        if isinstance(tc, str):
+            return tc
+        if isinstance(tc, dict):
+            fn = tc.get("function") or {}
+            if isinstance(fn, dict):
+                return fn.get("name")
+        return None
+
+    def _build_tool_protocol(self) -> str:
+        lines: List[str] = []
+        for idx, tool_obj in enumerate(self._tools, start=1):
+            name = self._tool_name(tool_obj)
+            desc = self._tool_desc(tool_obj)
+            lines.append(f"{idx}. {name}: {desc}" if desc else f"{idx}. {name}")
+        tools_desc = "\n".join(lines)
+
+        base = self._system_prompt or "You are an AI assistant that helps developers generate structured instruction files for building software applications."
+
+        forced = self._resolve_tool_choice_name()
+        if forced:
+            base += f"\n\nWhen responding to this request, please use the '{forced}' tool."
+        elif self._tool_choice in ("any", "required"):
+            base += "\n\nWhen responding to this request, please select and use one of the available tools."
+
+        return (
+            f"{base}\n\n"
+            "You have access to the following tools:\n"
+            f"{tools_desc}\n\n"
+            "When using a tool, respond with the tool name and arguments in this structure:\n"
+            '{"tool_call":{"name":"tool_name","arguments":{}}}\n\n'
+            "When providing a direct response without using tools, use this structure:\n"
+            '{"final":"your message"}\n\n'
+            "Please ensure your response follows valid JSON formatting and uses the exact tool names listed above."
+        )
+
+    @staticmethod
+    def _extract_json_object(text: str) -> Optional[dict]:
+        if not text:
+            return None
+        cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
+        try:
+            return json.loads(cleaned)
+        except Exception:
+            pass
+
+        match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+        if not match:
+            return None
+        try:
+            return json.loads(match.group(0))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _to_langchain_messages(messages: List[Any]) -> List[Dict[str, str]]:
+        normalized: List[Dict[str, str]] = []
+        for message in messages:
+            if isinstance(message, dict):
+                role = message.get("role", "user")
+                content = message.get("content", "")
+                if role not in ("system", "user", "assistant"):
+                    role = "user"
+                normalized.append({"role": role, "content": str(content)})
+                continue
+
+            if hasattr(message, "type") and hasattr(message, "content"):
+                msg_type = message.type
+                content = str(message.content)
+                if msg_type == "system":
+                    normalized.append({"role": "system", "content": content})
+                elif msg_type in ("human", "user"):
+                    normalized.append({"role": "user", "content": content})
+                elif msg_type == "ai":
+                    normalized.append({"role": "assistant", "content": content})
+                elif msg_type == "tool":
+                    tool_name = getattr(message, "name", "tool")
+                    normalized.append({"role": "user", "content": f"[Tool result from {tool_name}] {content}"})
+                else:
+                    normalized.append({"role": "user", "content": content})
+                continue
+
+            normalized.append({"role": "user", "content": str(message)})
+        return normalized
+
+    async def ainvoke(self, messages: List[Any]) -> AIMessage:
+        protocol = self._build_tool_protocol()
+        normalized_messages = self._to_langchain_messages(messages)
+        
+        # Merge all system messages into one to avoid dual SYSTEM blocks
+        system_contents = [protocol]
+        non_system_messages = []
+        
+        for msg in normalized_messages:
+            if msg.get("role") == "system":
+                system_contents.append(msg.get("content", ""))
+            else:
+                non_system_messages.append(msg)
+        
+        # Create single system message with merged content
+        merged_system_content = "\n\n".join(system_contents)
+        request_messages = [{"role": "system", "content": merged_system_content}]
+        request_messages.extend(non_system_messages)
+
+        prompt_parts = []
+        for msg in request_messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            prompt_parts.append(f"{role.upper()}: {content}")
+        prompt = "\n\n".join(prompt_parts)
+
+        text = await self._manager.generate_text_async(prompt)
+        data = self._extract_json_object(text)
+
+        forced = self._resolve_tool_choice_name()
+        if isinstance(data, dict) and isinstance(data.get("tool_call"), dict):
+            tool_call = data["tool_call"]
+            name = tool_call.get("name")
+            args = tool_call.get("arguments", {})
+            if isinstance(name, str) and isinstance(args, dict):
+                if forced is not None and name != forced:
+                    data["tool_call"]["name"] = forced
+                    data["tool_call"]["arguments"] = {}
+                    name = forced
+                    args = {}
+                if isinstance(name, str) and isinstance(args, dict):
+                    return AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": f"call_{uuid.uuid4().hex[:16]}",
+                                "name": name,
+                                "args": args,
+                            }
+                        ],
+                    )
+
+        if isinstance(data, dict) and isinstance(data.get("final"), str):
+            return AIMessage(content=data["final"])
+
+        return AIMessage(content=text)
+
+    # Returns string response for consistency with ConfigurableAIManager
+    async def generate_text_async(self, messages: List[Any]) -> str:
+        """
+        Generate text with tools support - returns string response.
+        
+        Args:
+            messages: List of message objects.
+            
+        Returns:
+            Generated text string (extracted from final answer or raw text).
+        """
+        result = await self.ainvoke(messages)
+        return result.content if hasattr(result, 'content') else str(result)
+
+    def bind(self, **kwargs: Any) -> "ToolBoundConfigurableAIAdapter":
+        """
+        Bind additional parameters to create a new ToolBoundConfigurableAIAdapter.
+        
+        This ensures that both bind() and bind_tools() return the same type,
+        providing a consistent interface for LangChain compatibility.
+        
+        Args:
+            **kwargs: Additional parameters to bind
+            
+        Returns:
+            A new ToolBoundConfigurableAIAdapter with merged parameters
+        """
+        # Merge existing bound parameters with new ones
+        merged_params = self._bound_params.copy()
+        merged_params.update(kwargs)
+        
+        return ToolBoundConfigurableAIAdapter(
+            self._manager,
+            self._tools,
+            system_prompt=self._system_prompt,
+            tool_choice=self._tool_choice,
+            strict=self._strict,
+            parallel_tool_calls=self._parallel_tool_calls,
+            response_format=self._response_format,
+            **merged_params
+        )
+
+    def bind_tools(
+        self,
+        tools: Sequence[Union[dict, type, Any]],
+        *,
+        tool_choice: Optional[Union[dict, str, bool]] = None,
+        strict: Optional[bool] = None,
+        parallel_tool_calls: Optional[bool] = None,
+        response_format: Optional[dict] = None,
+        system_prompt: Optional[str] = None,
+        **kwargs: Any,
+    ) -> "ToolBoundConfigurableAIAdapter":
+        """
+        Bind additional tools to this adapter.
+        
+        Args:
+            tools: Additional tools to bind
+            tool_choice: Tool choice override
+            strict: Strict mode override
+            parallel_tool_calls: Parallel tool calls override
+            response_format: Response format override
+            system_prompt: System prompt override
+            **kwargs: Additional parameters
+            
+        Returns:
+            A new ToolBoundConfigurableAIAdapter with additional tools
+        """
+        # Merge tools
+        merged_tools = list(self._tools) + list(tools)
+        
+        # Merge bound parameters
+        merged_params = self._bound_params.copy()
+        merged_params.update(kwargs)
+        
+        return ToolBoundConfigurableAIAdapter(
+            self._manager,
+            merged_tools,
+            system_prompt=system_prompt or self._system_prompt,
+            tool_choice=tool_choice if tool_choice is not None else self._tool_choice,
+            strict=strict if strict is not None else self._strict,
+            parallel_tool_calls=parallel_tool_calls if parallel_tool_calls is not None else self._parallel_tool_calls,
+            response_format=response_format or self._response_format,
+            **merged_params
+        )
 
 
 class ConfigurableAIManager:
@@ -190,12 +462,17 @@ class ConfigurableAIManager:
         Returns:
             Generated text
         """
+        # Merge bound parameters with kwargs (kwargs take precedence)
+        final_kwargs = {}
+        if hasattr(self, '_bound_params'):
+            final_kwargs.update(self._bound_params)
+        final_kwargs.update(kwargs)
+        
         try:
             # Try to get existing event loop
             loop = asyncio.get_running_loop()
             # If we're in an event loop, we need to use a different approach
             import concurrent.futures
-            import threading
             
             def run_in_thread():
                 # Create a new event loop in a separate thread
@@ -203,7 +480,7 @@ class ConfigurableAIManager:
                 asyncio.set_event_loop(new_loop)
                 try:
                     return new_loop.run_until_complete(
-                        self.generate_text_async(prompt, provider, **kwargs)
+                        self.generate_text_async(prompt, provider, **final_kwargs)
                     )
                 finally:
                     new_loop.close()
@@ -215,7 +492,7 @@ class ConfigurableAIManager:
                 
         except RuntimeError:
             # No event loop running, safe to use asyncio.run()
-            return asyncio.run(self.generate_text_async(prompt, provider, **kwargs))
+            return asyncio.run(self.generate_text_async(prompt, provider, **final_kwargs))
     
     async def generate_text_async(self, prompt: str, provider: Optional[str] = None, **kwargs) -> str:
         """
@@ -237,8 +514,14 @@ class ConfigurableAIManager:
         if provider_name not in self._providers:
             raise ValueError(f"Provider '{provider_name}' is not configured")
         
+        # Merge bound parameters with kwargs (kwargs take precedence)
+        final_kwargs = {}
+        if hasattr(self, '_bound_params'):
+            final_kwargs.update(self._bound_params)
+        final_kwargs.update(kwargs)
+        
         logger.info(f"Generating text using provider: {provider_name}")
-        return await self._providers[provider_name].generate_text(prompt, **kwargs)
+        return await self._providers[provider_name].generate_text(prompt, **final_kwargs)
     
     def generate_embeddings(self, texts: List[str], provider: Optional[str] = None, **kwargs) -> List[List[float]]:
         """
@@ -257,7 +540,6 @@ class ConfigurableAIManager:
             loop = asyncio.get_running_loop()
             # If we're in an event loop, we need to use a different approach
             import concurrent.futures
-            import threading
             
             def run_in_thread():
                 # Create a new event loop in a separate thread
@@ -312,6 +594,137 @@ class ConfigurableAIManager:
             return QuasarConfig(**config_dict)
         else:
             return AIProviderConfig.from_dict(config_dict)
+
+    def bind_tools(
+        self,
+        tools: Sequence[Union[dict, type, Any]],
+        *,
+        tool_choice: Optional[Union[dict, str, bool]] = None,
+        strict: Optional[bool] = None,
+        parallel_tool_calls: Optional[bool] = None,
+        response_format: Optional[dict] = None,
+        system_prompt: Optional[str] = None,
+        **kwargs: Any,
+    ) -> ToolBoundConfigurableAIAdapter:
+        """
+        Bind tool-like objects to this chat model.
+
+        Assumes model is compatible with OpenAI tool-calling API.
+
+        Args:
+            tools: A list of tool definitions to bind to this chat model.
+            tool_choice: Which tool to require the model to call. Options are:
+                - `str` of the form `'<<tool_name>>'`: calls `<<tool_name>>` tool.
+                - `'auto'`: automatically selects a tool (including no tool).
+                - `'none'`: does not call a tool.
+                - `'any'` or `'required'` or `True`: force at least one tool to be called.
+                - `dict` of the form `{"type": "function", "function": {"name": <<tool_name>>}}`: calls `<<tool_name>>` tool.
+                - `False` or `None`: no effect, default behavior.
+            strict: If `True`, model output is guaranteed to exactly match the JSON Schema
+                provided in the tool definition.
+            parallel_tool_calls: Set to `False` to disable parallel tool use.
+                Defaults to `None` (no specification, which allows parallel tool use).
+            response_format: Optional schema to format model response.
+            system_prompt: Optional system prompt override.
+            **kwargs: Any additional parameters.
+
+        Returns:
+            ToolBoundConfigurableAIAdapter instance.
+        """
+        # Process tool_choice similar to LangChain
+        processed_tool_choice = self._process_tool_choice(tool_choice, tools)
+        
+        # Handle parallel_tool_calls
+        if parallel_tool_calls is not None:
+            kwargs["parallel_tool_calls"] = parallel_tool_calls
+            
+        # Handle strict mode
+        if strict is not None:
+            kwargs["strict"] = strict
+            
+        # Handle response_format
+        if response_format is not None:
+            kwargs["response_format"] = response_format
+        
+        # Log unsupported kwargs
+        unsupported = [k for k in kwargs if k not in ["parallel_tool_calls", "strict", "response_format"]]
+        if unsupported:
+            logger.debug("bind_tools ignoring unsupported kwargs: %s", unsupported)
+            
+        return ToolBoundConfigurableAIAdapter(
+            self,
+            list(tools),
+            system_prompt=system_prompt,
+            tool_choice=processed_tool_choice,
+            strict=strict,
+            parallel_tool_calls=parallel_tool_calls,
+            response_format=response_format,
+        )
+    
+    def bind(self, **kwargs: Any) -> ToolBoundConfigurableAIAdapter:
+        """
+        Bind arbitrary parameters and return a ToolBoundConfigurableAIAdapter.
+        
+        This method is required for LangChain compatibility, particularly with
+        langchain.agents.create_agent. Returns the same type as bind_tools() to
+        ensure consistent interface.
+        
+        Args:
+            **kwargs: Arbitrary keyword arguments to bind to the manager
+            
+        Returns:
+            A ToolBoundConfigurableAIAdapter instance with bound parameters
+        """
+        # Create a ToolBoundConfigurableAIAdapter with empty tools but bound parameters
+        # This ensures consistent interface with bind_tools()
+        return ToolBoundConfigurableAIAdapter(
+            self,
+            tools=[],  # No tools for general bind()
+            **kwargs
+        )
+
+    def _process_tool_choice(self, tool_choice: Optional[Union[dict, str, bool]], tools: Sequence[Any]) -> Optional[Union[dict, str]]:
+        """Process tool_choice parameter similar to LangChain implementation."""
+        if not tool_choice:
+            return tool_choice
+            
+        # Get tool names for validation
+        tool_names = []
+        for tool in tools:
+            if hasattr(tool, 'name'):
+                tool_names.append(tool.name)
+            elif hasattr(tool, '__name__'):
+                tool_names.append(tool.__name__)
+            elif isinstance(tool, dict) and 'function' in tool:
+                tool_names.append(tool['function'].get('name', ''))
+            elif isinstance(tool, dict) and 'name' in tool:
+                tool_names.append(tool['name'])
+        
+        if isinstance(tool_choice, str):
+            # tool_choice is a tool/function name
+            if tool_choice in tool_names:
+                return {
+                    "type": "function",
+                    "function": {"name": tool_choice},
+                }
+            # 'any' is not natively supported by OpenAI API.
+            # We support 'any' since other models use this instead of 'required'.
+            elif tool_choice == "any":
+                return "required"
+            elif tool_choice in ["auto", "none", "required"]:
+                return tool_choice
+            else:
+                # Unknown string, pass through
+                return tool_choice
+        elif isinstance(tool_choice, bool):
+            return "required" if tool_choice else None
+        elif isinstance(tool_choice, dict):
+            return tool_choice
+        else:
+            raise ValueError(
+                f"Unrecognized tool_choice type. Expected str, bool or dict. "
+                f"Received: {tool_choice}"
+            )
 
 
 # Convenience function for quick setup (env-var based, no persistence)
