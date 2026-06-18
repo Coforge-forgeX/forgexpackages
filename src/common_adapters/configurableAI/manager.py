@@ -2,7 +2,7 @@
 ConfigurableAI Manager - Main interface for AI provider switching.
 """
 
-from typing import Dict, Any, Optional, List, Union, Sequence
+from typing import Dict, Any, Optional, List, Union, Sequence, Literal
 import logging
 import os
 import json
@@ -10,6 +10,8 @@ import asyncio
 import re
 import uuid
 from langchain_core.messages import AIMessage
+from langchain_core.language_models import LanguageModelInput
+from langchain_core.runnables import Runnable
 from .providers import ProviderRegistry, BaseAIProvider
 from .config import (
     AIProviderConfig, 
@@ -18,6 +20,252 @@ from .config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class StructuredOutputWrapper:
+    """
+    Runnable wrapper for structured output generation.
+    
+    This class implements the Runnable interface to provide structured output
+    functionality compatible with LangChain patterns.
+    """
+    
+    def __init__(
+        self,
+        manager: "ConfigurableAIManager",
+        schema: Optional[Union[Dict, type]] = None,
+        method: Literal["function_calling", "json_mode", "json_schema"] = "json_schema",
+        include_raw: bool = False,
+        strict: Optional[bool] = None,
+        **kwargs: Any,
+    ):
+        self.manager = manager
+        self.schema = schema
+        self.method = method
+        self.include_raw = include_raw
+        self.strict = strict
+        self.kwargs = kwargs
+        
+        # Process schema to determine output format
+        self._is_pydantic = self._check_pydantic_schema(schema)
+        self._schema_dict = self._convert_schema_to_dict(schema)
+    
+    def _check_pydantic_schema(self, schema: Any) -> bool:
+        """Check if schema is a Pydantic model class."""
+        if schema is None:
+            return False
+        try:
+            # Check if it's a Pydantic model class
+            return (
+                hasattr(schema, '__bases__') and 
+                any('BaseModel' in str(base) for base in schema.__mro__)
+            )
+        except:
+            return False
+    
+    def _convert_schema_to_dict(self, schema: Any) -> Optional[Dict]:
+        """Convert various schema formats to dictionary format."""
+        if schema is None:
+            return None
+            
+        if isinstance(schema, dict):
+            return schema
+            
+        if self._is_pydantic:
+            try:
+                # For Pydantic models, get the schema
+                if hasattr(schema, 'model_json_schema'):
+                    return schema.model_json_schema()
+                elif hasattr(schema, 'schema'):
+                    return schema.schema()
+            except:
+                pass
+                
+        # For TypedDict or other types, try to extract info
+        if hasattr(schema, '__annotations__'):
+            properties = {}
+            required = []
+            
+            for field_name, field_type in schema.__annotations__.items():
+                # Basic type conversion
+                if field_type == str:
+                    properties[field_name] = {"type": "string"}
+                elif field_type == int:
+                    properties[field_name] = {"type": "integer"}
+                elif field_type == float:
+                    properties[field_name] = {"type": "number"}
+                elif field_type == bool:
+                    properties[field_name] = {"type": "boolean"}
+                else:
+                    properties[field_name] = {"type": "string"}  # Default fallback
+                    
+                required.append(field_name)
+            
+            return {
+                "type": "object",
+                "properties": properties,
+                "required": required
+            }
+            
+        return None
+    
+    def _build_structured_prompt(self, original_prompt: str) -> str:
+        """Build a prompt that encourages structured output."""
+        if self.method == "json_mode":
+            if self._schema_dict:
+                schema_str = json.dumps(self._schema_dict, indent=2)
+                return f"{original_prompt}\n\nPlease respond with a valid JSON object that matches this schema:\n{schema_str}"
+            else:
+                return f"{original_prompt}\n\nPlease respond with a valid JSON object."
+        
+        elif self.method == "function_calling":
+            if self._schema_dict:
+                # Convert schema to function format
+                function_schema = {
+                    "name": "structured_response",
+                    "description": "Generate a structured response",
+                    "parameters": self._schema_dict
+                }
+                schema_str = json.dumps(function_schema, indent=2)
+                return f"{original_prompt}\n\nPlease call the structured_response function with the appropriate parameters:\n{schema_str}"
+            else:
+                return original_prompt
+        
+        else:  # json_schema
+            if self._schema_dict:
+                schema_str = json.dumps(self._schema_dict, indent=2)
+                return f"{original_prompt}\n\nPlease respond with a valid JSON object that matches this schema:\n{schema_str}"
+            else:
+                return f"{original_prompt}\n\nPlease respond with a valid JSON object."
+    
+    def _parse_response(self, raw_response: str) -> tuple[Any, Optional[Exception]]:
+        """Parse the raw response according to the schema."""
+        try:
+            # Try to extract JSON from response
+            cleaned_response = raw_response.strip()
+            
+            # Remove code block markers if present
+            if cleaned_response.startswith('```'):
+                lines = cleaned_response.split('\n')
+                if len(lines) > 2:
+                    cleaned_response = '\n'.join(lines[1:-1])
+            
+            # Try to find JSON object in the response
+            json_match = re.search(r'\{.*\}', cleaned_response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                json_str = cleaned_response
+            
+            # Parse JSON
+            parsed_data = json.loads(json_str)
+            
+            # If we have a Pydantic schema, create an instance
+            if self._is_pydantic and self.schema:
+                try:
+                    return self.schema(**parsed_data), None
+                except Exception as e:
+                    # If Pydantic validation fails, return the dict
+                    return parsed_data, e
+            
+            return parsed_data, None
+            
+        except Exception as e:
+            return None, e
+    
+    def invoke(self, input_data: Union[str, List, Dict]) -> Union[Dict, Any]:
+        """
+        Invoke the structured output generation.
+        
+        Args:
+            input_data: Input prompt or messages
+            
+        Returns:
+            Structured output according to schema
+        """
+        # Convert input to prompt string
+        if isinstance(input_data, str):
+            prompt = input_data
+        elif isinstance(input_data, list):
+            # Handle list of messages
+            prompt_parts = []
+            for msg in input_data:
+                if isinstance(msg, dict):
+                    role = msg.get('role', 'user')
+                    content = msg.get('content', '')
+                    prompt_parts.append(f"{role.upper()}: {content}")
+                else:
+                    prompt_parts.append(str(msg))
+            prompt = '\n\n'.join(prompt_parts)
+        else:
+            prompt = str(input_data)
+        
+        # Build structured prompt
+        structured_prompt = self._build_structured_prompt(prompt)
+        
+        # Generate response
+        raw_response = self.manager.generate_text(structured_prompt, **self.kwargs)
+        
+        # Parse response
+        parsed_response, parsing_error = self._parse_response(raw_response)
+        
+        if self.include_raw:
+            return {
+                'raw': raw_response,
+                'parsed': parsed_response,
+                'parsing_error': parsing_error
+            }
+        else:
+            if parsing_error:
+                raise parsing_error
+            return parsed_response
+    
+    async def ainvoke(self, input_data: Union[str, List, Dict]) -> Union[Dict, Any]:
+        """
+        Async invoke the structured output generation.
+        
+        Args:
+            input_data: Input prompt or messages
+            
+        Returns:
+            Structured output according to schema
+        """
+        # Convert input to prompt string
+        if isinstance(input_data, str):
+            prompt = input_data
+        elif isinstance(input_data, list):
+            # Handle list of messages
+            prompt_parts = []
+            for msg in input_data:
+                if isinstance(msg, dict):
+                    role = msg.get('role', 'user')
+                    content = msg.get('content', '')
+                    prompt_parts.append(f"{role.upper()}: {content}")
+                else:
+                    prompt_parts.append(str(msg))
+            prompt = '\n\n'.join(prompt_parts)
+        else:
+            prompt = str(input_data)
+        
+        # Build structured prompt
+        structured_prompt = self._build_structured_prompt(prompt)
+        
+        # Generate response
+        raw_response = await self.manager.generate_text_async(structured_prompt, **self.kwargs)
+        
+        # Parse response
+        parsed_response, parsing_error = self._parse_response(raw_response)
+        
+        if self.include_raw:
+            return {
+                'raw': raw_response,
+                'parsed': parsed_response,
+                'parsing_error': parsing_error
+            }
+        else:
+            if parsing_error:
+                raise parsing_error
+            return parsed_response
 
 
 class ToolBoundConfigurableAIAdapter:
@@ -725,6 +973,74 @@ class ConfigurableAIManager:
                 f"Unrecognized tool_choice type. Expected str, bool or dict. "
                 f"Received: {tool_choice}"
             )
+
+    def with_structured_output(
+        self,
+        schema: Optional[Union[Dict, type]] = None,
+        *,
+        method: Literal["function_calling", "json_mode", "json_schema"] = "json_schema",
+        include_raw: bool = False,
+        strict: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> Runnable[LanguageModelInput, Union[Dict, Any]]:
+        """Model wrapper that returns outputs formatted to match the given schema.
+
+        Args:
+            schema: The output schema. Can be passed in as:
+                - A JSON Schema,
+                - A `TypedDict` class,
+                - A Pydantic class,
+                - Or an OpenAI function/tool schema.
+
+                If `schema` is a Pydantic class then the model output will be a
+                Pydantic instance of that class, and the model-generated fields will be
+                validated by the Pydantic class. Otherwise the model output will be a
+                dict and will not be validated.
+
+            method: The method for steering model generation, one of:
+                - `'json_schema'`: Uses structured output API (default)
+                - `'function_calling'`: Uses tool-calling API
+                - `'json_mode'`: Uses JSON mode
+
+            include_raw: If `False` then only the parsed structured output is returned.
+                If `True` then both the raw model response and the parsed model response
+                will be returned.
+
+            strict: Whether to enable strict mode for schema validation.
+
+            kwargs: Additional keyword args are passed through to the model.
+
+        Returns:
+            A `Runnable` that takes same inputs as ConfigurableAIManager.
+            If `include_raw` is `False` and `schema` is a Pydantic class, outputs an
+            instance of `schema`. Otherwise, outputs a `dict`.
+
+            If `include_raw` is `True`, then outputs a `dict` with keys:
+            - `'raw'`: Raw model response
+            - `'parsed'`: Parsed response (None if parsing error)
+            - `'parsing_error'`: BaseException | None
+
+        Example:
+            ```python
+            from pydantic import BaseModel
+
+            class AnswerWithJustification(BaseModel):
+                answer: str
+                justification: str
+
+            manager = ConfigurableAIManager()
+            structured_model = manager.with_structured_output(AnswerWithJustification)
+            result = structured_model.invoke("What weighs more, a pound of bricks or feathers?")
+            ```
+        """
+        return StructuredOutputWrapper(
+            manager=self,
+            schema=schema,
+            method=method,
+            include_raw=include_raw,
+            strict=strict,
+            **kwargs
+        )
 
 
 # Convenience function for quick setup (env-var based, no persistence)
