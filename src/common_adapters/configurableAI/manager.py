@@ -768,7 +768,12 @@ class ConfigurableAIManager:
             final_kwargs.update(self._bound_params)
         final_kwargs.update(kwargs)
         
-        logger.info(f"Generating text using provider: {provider_name}")
+        # Ensure consistent max_tokens default for all providers
+        if 'max_tokens' not in final_kwargs:
+            final_kwargs['max_tokens'] = 10000
+            logger.debug(f"Setting default max_tokens=10000 for provider: {provider_name}")
+        
+        logger.info(f"Generating text using provider: {provider_name} with max_tokens={final_kwargs.get('max_tokens')}")
         return await self._providers[provider_name].generate_text(prompt, **final_kwargs)
     
     def generate_embeddings(self, texts: List[str], provider: Optional[str] = None, **kwargs) -> List[List[float]]:
