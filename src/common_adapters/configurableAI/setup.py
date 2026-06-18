@@ -6,7 +6,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="configurable-ai",
-    version="2.0.1",
+    version="2.0.3",
     description="A common package for switching between AI providers with database persistence",
     author="Forgex Team",
     packages=find_packages(),

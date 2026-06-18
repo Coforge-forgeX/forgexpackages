@@ -114,7 +114,7 @@ class QuasarProvider(BaseAIProvider):
                         "Content-Type": "application/json",
                         "X-API-KEY": self.config.api_key
                     },
-                    timeout=60.0
+                    timeout=300.0  # Increased from 60s to 5 minutes for long responses
                 )
             except ImportError:
                 raise ImportError("httpx package is required for Quasar provider")
@@ -124,18 +124,70 @@ class QuasarProvider(BaseAIProvider):
         """Generate text using Quasar API."""
         client = self._get_client()
         
+        # Fix: Increase default max_tokens from 100 to 10000 to prevent truncation
+        max_tokens = kwargs.get("max_tokens", 10000)
+        
         payload = {
             "model": self.config.model or "claude-sonnet-4",
             "messages": [{"role": "user", "content": prompt}],
             "temperature": kwargs.get("temperature", 0.7),
-            "max_tokens": kwargs.get("max_tokens", 100)
+            "max_tokens": max_tokens
         }
         
-        response = await client.post(self.config.endpoint, json=payload)
-        response.raise_for_status()
+        logger.debug(f"Quasar API request: model={payload['model']}, max_tokens={max_tokens}")
         
-        data = response.json()
-        return data['choices'][0]['message']['content']
+        try:
+            response = await client.post(self.config.endpoint, json=payload)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # Enhanced error handling: Validate response structure
+            if not data or 'choices' not in data:
+                logger.error(f"Invalid Quasar API response structure: {data}")
+                raise ValueError("Invalid API response: missing 'choices' field")
+            
+            if not data['choices'] or len(data['choices']) == 0:
+                logger.error(f"Empty choices in Quasar API response: {data}")
+                raise ValueError("Invalid API response: empty choices")
+            
+            choice = data['choices'][0]
+            
+            # Check for API errors in the response
+            if 'error' in choice:
+                logger.error(f"Quasar API error in choice: {choice['error']}")
+                raise ValueError(f"API error: {choice['error']}")
+            
+            if 'message' not in choice or 'content' not in choice['message']:
+                logger.error(f"Invalid choice structure in Quasar API response: {choice}")
+                raise ValueError("Invalid API response: missing message content")
+            
+            content = choice['message']['content']
+            
+            # Truncation detection: Check if response was cut off due to token limit
+            finish_reason = choice.get('finish_reason')
+            if finish_reason == 'length':
+                logger.warning(
+                    f"Quasar response was truncated due to max_tokens limit ({max_tokens}). "
+                    f"Consider increasing max_tokens for longer responses. "
+                    f"Response length: {len(content)} characters"
+                )
+            elif finish_reason:
+                logger.debug(f"Quasar response finished with reason: {finish_reason}")
+            
+            # Validate content is not empty
+            if not content or not content.strip():
+                logger.warning("Quasar API returned empty content")
+                return ""
+            
+            logger.debug(f"Quasar response: length={len(content)} chars, finish_reason={finish_reason}")
+            return content
+            
+        except Exception as e:
+            logger.error(f"Quasar API request failed: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"Response status: {e.response.status_code}, body: {e.response.text}")
+            raise
     
     async def generate_embeddings(self, texts: List[str], **kwargs) -> List[List[float]]:
         """Generate embeddings using Quasar API."""
