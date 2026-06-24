@@ -112,9 +112,9 @@ async def execute_tools_with_error_handling(state: ReactGraphState) -> ReactGrap
 
 
 
-def create_azure_devops_graph_with_history(session_manager, msgs: int):
+def create_jira_graph_with_history(session_manager, msgs: int):
     """
-    Create and compile the Azure DevOps reactive agent graph with history initialization.
+    Create and compile the JIRA reactive agent graph with history initialization.
     
     Args:
         session_manager: Session manager instance for loading conversation history
