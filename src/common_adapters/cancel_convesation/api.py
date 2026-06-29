@@ -21,6 +21,10 @@ class CancelRequest:
     reason: str = "user_requested"
 
 
+class SessionTerminatedError(RuntimeError):
+    """Raised when a conversation/session has been terminated."""
+
+
 def _cancellation_key(*, job_id: Optional[str], conversation_id: Optional[str]) -> str:
     if job_id:
         return f"job:{job_id}"
@@ -41,6 +45,10 @@ class _CancellationStore:
         self._cache = None
         self._lock = threading.Lock()
         self._mem: dict[str, dict[str, Any]] = {}
+
+        # Separate session termination flag store. Termination is sticky for the
+        # process lifetime unless explicitly cleared.
+        self._terminated: dict[str, dict[str, Any]] = {}
 
     def _get_cache(self):
         if self._cache is not None:
@@ -96,6 +104,19 @@ class _CancellationStore:
                 self._mem.pop(self._prefix + key, None)
                 return False
             return True
+
+    def mark_terminated(self, conversation_id: str, req: dict[str, Any]) -> None:
+        """Mark a conversation as terminated (sticky, process-local)."""
+        with self._lock:
+            self._terminated[f"conv:{conversation_id}"] = {**req, "terminated": True, "ts": time.time()}
+
+    def is_terminated(self, conversation_id: str) -> bool:
+        with self._lock:
+            return f"conv:{conversation_id}" in self._terminated
+
+    def clear_terminated(self, conversation_id: str) -> None:
+        with self._lock:
+            self._terminated.pop(f"conv:{conversation_id}", None)
 
 
 _store = _CancellationStore()
@@ -252,6 +273,40 @@ async def is_cancelled(*, job_id: Optional[str] = None, conversation_id: Optiona
             # expired -> clean it up
             _store._mem.pop(_mem_key(key), None)
     return await _store.is_cancelled(key)
+
+
+def terminate_session(
+    *,
+    conversation_id: str,
+    workspace_id: str | None = None,
+    user_id: str | None = None,
+    reason: str = "user_requested",
+) -> dict:
+    """Terminate a conversation/session.
+
+    This is distinct from request cancellation.
+    Termination is sticky and can be used by agents/orchestrators to stop
+    persisting outputs for the rest of the conversation.
+    """
+    payload = {
+        "status": "success",
+        "terminated": True,
+        "conversation_id": str(conversation_id),
+        "workspace_id": workspace_id,
+        "user_id": user_id,
+        "reason": reason,
+    }
+    _store.mark_terminated(str(conversation_id), payload)
+    return payload
+
+
+def is_session_terminated(*, conversation_id: str) -> bool:
+    return _store.is_terminated(str(conversation_id))
+
+
+def raise_if_session_terminated(*, conversation_id: str) -> None:
+    if is_session_terminated(conversation_id=str(conversation_id)):
+        raise SessionTerminatedError("session_terminated")
 
 
 def cancel_conversation(
