@@ -48,6 +48,144 @@ All cancellation operations are keyed by either:
 
 The helper `_cancellation_key(job_id=..., conversation_id=...)` enforces this.
 
+### Quick Start: `cancel_conversation`
+
+`cancel_conversation` is a synchronous entrypoint designed to be exposed as a tool (for example, via an MCP server) so a UI can stop an in-flight request.
+
+Import it directly from this module:
+
+```python
+from common_adapters.cancel_convesation import cancel_conversation
+```
+
+Minimal usage:
+
+```python
+# Cancel by job_id when available (preferred)
+cancel_conversation(job_id="123")
+
+# Or cancel by conversation_id when job_id is not available
+cancel_conversation(conversation_id="conv-abc")
+```
+
+Key behavior:
+
+1. If a running asyncio task was registered for the same key, it is cancelled immediately.
+1. A short-lived in-memory cancellation flag is set for the same key so multi-step pipelines can stop at safe boundaries.
+1. The flag auto-clears after a short TTL to avoid cancelling subsequent prompts in the same conversation.
+
+### Agent Integration Examples
+
+This module supports two complementary integration patterns.
+
+#### 1) Expose `cancel_conversation` as a Tool
+
+Expose `cancel_conversation` so the UI can call it when the user clicks Stop/Cancel.
+
+Example (pattern used in existing servers):
+
+```python
+from common_adapters.cancel_convesation import cancel_conversation
+
+
+def register_tools(mcp) -> None:
+    # Exposes tool name `cancel_conversation`.
+    mcp.tool()(cancel_conversation)
+```
+
+The tool returns a payload like:
+
+```json
+{
+  "status": "success",
+  "cancelled": true,
+  "key": "job:123",
+  "job_id": "123",
+  "conversation_id": null,
+  "workspace_id": null,
+  "user_id": null,
+  "reason": "user_requested"
+}
+```
+
+#### 2) Make Your Agent Work Cancel-Safely
+
+To ensure cancellation interrupts an in-flight provider call, register the currently running asyncio task using `register_task(...)` and always `unregister_task(...)` in a `finally` block.
+
+Example wrapper around a long-running async operation (LLM call, retrieval step, multi-stage pipeline):
+
+```python
+import asyncio
+
+from common_adapters.cancel_convesation import (
+    CancelledError,
+    is_cancelled,
+    register_task,
+    unregister_task,
+)
+
+
+async def run_agent_step(*, conversation_id: str, job_id: str | None = None) -> dict:
+    task = asyncio.current_task()
+    if task is None:
+        # Very uncommon, but keeps typing and runtime behavior explicit.
+        raise RuntimeError("No current asyncio task")
+
+    register_task(conversation_id=conversation_id, job_id=job_id, task=task)
+    try:
+        # Optional: check for a cancel that arrived slightly before registration.
+        if await is_cancelled(conversation_id=conversation_id, job_id=job_id):
+            return {
+                "status": "success",
+                "role": "assistant",
+                "content": "Request cancelled.",
+                "cancelled": True,
+            }
+
+        # Your long-running work here.
+        # Replace this with the actual model/provider call.
+        result = await do_provider_call()
+        return {"status": "success", "role": "assistant", "content": result}
+
+    except asyncio.CancelledError:
+        # Important: return deterministic cancellation output.
+        return {
+            "status": "success",
+            "role": "assistant",
+            "content": "Request cancelled.",
+            "cancelled": True,
+        }
+    except CancelledError:
+        # If you use token-based cancellation checks in other layers.
+        return {
+            "status": "success",
+            "role": "assistant",
+            "content": "Request cancelled.",
+            "cancelled": True,
+        }
+    finally:
+        unregister_task(conversation_id=conversation_id, job_id=job_id)
+```
+
+Multi-step pipelines should check `is_cancelled(...)` at safe boundaries:
+
+```python
+from common_adapters.cancel_convesation import is_cancelled
+
+
+async def pipeline(*, conversation_id: str) -> dict:
+    if await is_cancelled(conversation_id=conversation_id):
+        return {"status": "success", "content": "Request cancelled.", "cancelled": True}
+
+    step1 = await expensive_step_1()
+
+    if await is_cancelled(conversation_id=conversation_id):
+        return {"status": "success", "content": "Request cancelled.", "cancelled": True}
+
+    step2 = await expensive_step_2(step1)
+    return {"status": "success", "content": step2}
+```
+
 ### Public API
 
 These are the functions intended to be imported and used.
@@ -106,6 +244,21 @@ are only needed to hold a currently running task. Most integrations should use
   don’t check frequently.
 
 The flag auto-clears via a daemon thread.
+
+### Complete Export List
+
+The following symbols are exported by `common_adapters.cancel_convesation` (see `__init__.py`):
+
+```python
+CancelledError
+CancellationToken
+cancel_conversation
+is_cancelled
+register_cancellation
+register_task
+unregister_cancellation
+unregister_task
+```
 
 ### Provider Limitations
 
