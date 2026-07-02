@@ -105,6 +105,11 @@ class _CancellationStore:
                 return False
             return True
 
+    def clear_cancelled(self, key: str) -> None:
+        """Clear a cancellation flag immediately (process-local only)."""
+        with self._lock:
+            self._mem.pop(self._prefix + key, None)
+
     def mark_terminated(self, conversation_id: str, req: dict[str, Any]) -> None:
         """Mark a conversation as terminated (sticky, process-local)."""
         with self._lock:
@@ -378,3 +383,14 @@ def cancel_conversation(
         "user_id": user_id,
         "reason": reason,
     }
+
+
+def clear_cancellation(*, job_id: str | None = None, conversation_id: str | None = None) -> None:
+    """Clear a cancellation flag immediately.
+
+    This is intended for systems that reuse conversation_id across turns: after the
+    in-flight task is cancelled, clearing prevents subsequent requests from being
+    affected within the TTL window.
+    """
+    key = _cancellation_key(job_id=job_id, conversation_id=conversation_id)
+    _store.clear_cancelled(key)
