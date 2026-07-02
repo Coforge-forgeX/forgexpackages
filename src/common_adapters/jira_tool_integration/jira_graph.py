@@ -130,7 +130,7 @@ def create_jira_graph_with_history(session_manager, msgs: int):
         return await initialize_state_history(state, session_manager, msgs)
 
     # graph_nodes
-    graph.add_node("assistant", azure_devops_assistant)
+    graph.add_node("assistant", jira_assistant)
     graph.add_node("tools", execute_tools_with_error_handling)
     graph.add_node("initialize_state_history", initialize_state_history_wrapper)
 

@@ -16,5 +16,5 @@ def jira_update_config(data):
     if jira_active:
         data["jira_active"] = True
     else:
-        data["azure_devops_active"] = False
+        data["jira_active"] = False
     return data
