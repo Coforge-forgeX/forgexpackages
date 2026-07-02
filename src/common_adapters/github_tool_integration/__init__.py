@@ -29,6 +29,7 @@ from .github_connection import (
     test_and_save_github_connection,
     toggle_github_connection
 )
+from .github_update_config import github_update_config
 
 __all__ = [
     'GitHubLLMWrapper',
@@ -43,7 +44,8 @@ __all__ = [
     'test_github_connection',
     'save_github_credentials',
     'test_and_save_github_connection',
-    'toggle_github_connection'
+    'toggle_github_connection',
+    'github_update_config'
 ]
 
 __version__ = '1.0.0'

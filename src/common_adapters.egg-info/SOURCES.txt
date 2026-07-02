@@ -72,6 +72,7 @@ src/common_adapters/github_tool_integration/github_connection.py
 src/common_adapters/github_tool_integration/github_graph.py
 src/common_adapters/github_tool_integration/github_prompts.py
 src/common_adapters/github_tool_integration/github_tools.py
+src/common_adapters/github_tool_integration/github_update_config.py
 src/common_adapters/jira_tool_integration/__init__.py
 src/common_adapters/jira_tool_integration/jira_client_for_llm.py
 src/common_adapters/jira_tool_integration/jira_client_manager.py
