@@ -13,6 +13,78 @@ This module exists to support a common UI workflow:
 The design deliberately avoids "sticky" cancellation across subsequent prompts
 in the same conversation (conversation IDs are often reused).
 
+### Orchestrator Integration (Workflow Execution)
+
+This repo includes an orchestrator service (workflow execution) that calls other
+agents (BA/Architect/PO/etc) via MCP. To support a Stop button that works during
+orchestration, the orchestrator must do two things:
+
+1. Cancel its own in-flight await (so the UI returns immediately).
+1. Forward cancellation to the currently active agent (so the agent stops token
+   spend / work).
+
+The orchestrator integration implemented in `workflow_execution` follows these
+semantics:
+
+- STOP is **request-scoped**, not job-scoped: it cancels the current in-flight
+  run only.
+- STOP must **not** change the overall workflow/job lifecycle (do not set
+  `is_active=False`, do not mark the job `completed`/`cancelled`).
+- The orchestration layer should clear cancellation at the beginning of new runs
+  when reusing the same `conversation_id` (to avoid TTL poisoning).
+
+#### Orchestrator Tools
+
+- `cancel_conversation`: Exposed from this package for local, process-level
+  cancellation (same as standalone agents).
+- `cancel_active_conversation` (orchestrator wrapper): Cancels locally using
+  `cancel_conversation(...)` and then forwards cancellation to the active stage
+  agent's `cancel_conversation` tool.
+
+The wrapper is required because the shared `cancel_conversation(...)` is a
+generic, process-local primitive; it does not know how to route to a specific
+remote agent.
+
+#### Forwarding Contract
+
+Orchestrator forwards cancellation to the active agent by calling:
+
+```python
+client.session.call_tool(
+    "cancel_conversation",
+    arguments={"conversation_id": job_id, "reason": "user_requested"},
+)
+```
+
+This requires every agent to:
+
+1. Expose tool name `cancel_conversation`.
+1. Register its in-flight asyncio task with `register_task(conversation_id=...)`
+   during long-running operations.
+
+#### TTL Poisoning and Repeated STOP
+
+This module uses a short-lived cancellation flag (`_CANCEL_TTL_SECONDS`). When
+the same `conversation_id` is reused across multiple prompts, a STOP can
+"poison" the next prompt if it starts within the TTL window.
+
+To avoid this in orchestrated workflows:
+
+- Clear cancellation at the start of a new run:
+
+```python
+from common_adapters.cancel_convesation import clear_cancellation
+
+clear_cancellation(conversation_id=conversation_id)
+```
+
+- Make STOP idempotent by clearing and then cancelling:
+
+```python
+clear_cancellation(conversation_id=conversation_id)
+cancel_conversation(conversation_id=conversation_id)
+```
+
 ### Core Concepts
 
 Cancellation is implemented using two complementary mechanisms.
