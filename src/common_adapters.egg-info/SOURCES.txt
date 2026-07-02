@@ -1,6 +1,7 @@
 pyproject.toml
 src/common_adapters/__init__.py
 src/common_adapters/exceptions.py
+src/common_adapters/http_client.py
 src/common_adapters.egg-info/PKG-INFO
 src/common_adapters.egg-info/SOURCES.txt
 src/common_adapters.egg-info/dependency_links.txt
@@ -61,6 +62,16 @@ src/common_adapters/download_response/download.py
 src/common_adapters/download_response/markdown2docx.py
 src/common_adapters/download_response/markdown2pdf.py
 src/common_adapters/download_response/prompts.py
+src/common_adapters/error_security/__init__.py
+src/common_adapters/error_security/error_handling.py
+src/common_adapters/error_security/security_patterns.py
+src/common_adapters/github_tool_integration/__init__.py
+src/common_adapters/github_tool_integration/github_client_for_llm.py
+src/common_adapters/github_tool_integration/github_client_manager.py
+src/common_adapters/github_tool_integration/github_connection.py
+src/common_adapters/github_tool_integration/github_graph.py
+src/common_adapters/github_tool_integration/github_prompts.py
+src/common_adapters/github_tool_integration/github_tools.py
 src/common_adapters/jira_tool_integration/__init__.py
 src/common_adapters/jira_tool_integration/jira_client_for_llm.py
 src/common_adapters/jira_tool_integration/jira_client_manager.py

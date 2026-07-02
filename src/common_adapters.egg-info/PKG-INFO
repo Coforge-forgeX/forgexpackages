@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: common-adapters
-Version: 2.2.6
+Version: 3.0.0
 Summary: Shared adapter library for AI agents with database persistence
 Requires-Python: >=3.10
 Requires-Dist: tenacity>=8.2.0
@@ -29,3 +29,9 @@ Requires-Dist: reportlab>=3.6.0
 Requires-Dist: langfuse>=2.0.0
 Requires-Dist: langchain-core>=0.1.0
 Requires-Dist: msal>=1.36.0
+Requires-Dist: atlassian-python-api>=3.41.0
+Requires-Dist: jira>=3.5.0
+Requires-Dist: PyGithub>=2.0.0
+Requires-Dist: httpx>=0.24.0
+Requires-Dist: langchain-openai>=0.1.0
+Requires-Dist: langgraph>=0.1.0

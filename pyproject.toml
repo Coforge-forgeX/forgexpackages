@@ -47,6 +47,11 @@ dependencies = [
     # Jira Integration (PO Agent)
     "atlassian-python-api>=3.41.0",
     "jira>=3.5.0",
+    # GitHub Integration
+    "PyGithub>=2.0.0",
+    "httpx>=0.24.0",
+    "langchain-openai>=0.1.0",
+    "langgraph>=0.1.0",
 ]
 
 [tool.setuptools.packages.find]
