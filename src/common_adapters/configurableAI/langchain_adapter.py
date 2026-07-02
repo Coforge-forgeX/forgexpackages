@@ -166,6 +166,73 @@ class ConfigurableAIChatModel(BaseChatModel):
 
         return kwargs
 
+    def _normalize_prompt_input(self, prompt_or_messages: Any) -> str:
+        """Normalize plain text or message lists to a prompt string."""
+        if isinstance(prompt_or_messages, str):
+            return prompt_or_messages
+
+        if isinstance(prompt_or_messages, list):
+            # Accept LangChain message objects or dict-based role/content messages.
+            if prompt_or_messages and isinstance(prompt_or_messages[0], BaseMessage):
+                return self._convert_messages_to_prompt(prompt_or_messages)
+
+            normalized_messages: List[BaseMessage] = []
+            for item in prompt_or_messages:
+                if isinstance(item, BaseMessage):
+                    normalized_messages.append(item)
+                    continue
+
+                if isinstance(item, dict):
+                    role = str(item.get("role", "user")).lower()
+                    content = str(item.get("content", ""))
+                    if role == "system":
+                        normalized_messages.append(SystemMessage(content=content))
+                    elif role in {"assistant", "ai"}:
+                        normalized_messages.append(AIMessage(content=content))
+                    else:
+                        normalized_messages.append(HumanMessage(content=content))
+                    continue
+
+                normalized_messages.append(HumanMessage(content=str(item)))
+
+            return self._convert_messages_to_prompt(normalized_messages)
+
+        return str(prompt_or_messages)
+
+    def generate_text(
+        self,
+        prompt_or_messages: Any,
+        provider: Optional[str] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Compatibility method for callers expecting manager-style sync API."""
+        final_kwargs = self._prepare_kwargs()
+        final_kwargs.update(kwargs)
+        prompt = self._normalize_prompt_input(prompt_or_messages)
+
+        return self.manager.generate_text(
+            prompt,
+            provider=provider or self.provider,
+            **final_kwargs,
+        )
+
+    async def generate_text_async(
+        self,
+        prompt_or_messages: Any,
+        provider: Optional[str] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Compatibility method for callers expecting manager-style async API."""
+        final_kwargs = self._prepare_kwargs()
+        final_kwargs.update(kwargs)
+        prompt = self._normalize_prompt_input(prompt_or_messages)
+
+        return await self.manager.generate_text_async(
+            prompt,
+            provider=provider or self.provider,
+            **final_kwargs,
+        )
+
     def _generate(
         self,
         messages: List[BaseMessage],
