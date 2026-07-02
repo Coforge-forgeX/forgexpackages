@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "common-adapters"
-version = "2.2.7"
+version = "3.0.0"
 description = "Shared adapter library for AI agents with database persistence"
 requires-python = ">=3.10"
 dependencies = [
@@ -44,6 +44,9 @@ dependencies = [
     "langfuse>=2.0.0",
     "langchain-core>=0.1.0",
     "msal>=1.36.0",
+    # Jira Integration (PO Agent)
+    "atlassian-python-api>=3.41.0",
+    "jira>=3.5.0",
 ]
 
 [tool.setuptools.packages.find]
