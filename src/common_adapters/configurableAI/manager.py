@@ -9,6 +9,7 @@ import json
 import asyncio
 import re
 import uuid
+import ast
 from langchain_core.messages import AIMessage
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.runnables import Runnable
@@ -354,13 +355,194 @@ class ToolBoundConfigurableAIAdapter:
         except Exception:
             pass
 
-        match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
-        if not match:
+        # Parse first valid top-level JSON object instead of greedy regex capture.
+        decoder = json.JSONDecoder()
+        for idx, ch in enumerate(cleaned):
+            if ch != "{":
+                continue
+            try:
+                obj, _end = decoder.raw_decode(cleaned[idx:])
+                if isinstance(obj, dict):
+                    return obj
+            except Exception:
+                continue
+
+        return None
+
+    @staticmethod
+    def _extract_json_objects(text: str) -> List[Dict[str, Any]]:
+        """Extract all top-level JSON objects present in text."""
+        if not text:
+            return []
+
+        cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
+        objects: List[Dict[str, Any]] = []
+        decoder = json.JSONDecoder()
+
+        idx = 0
+        total = len(cleaned)
+        while idx < total:
+            start = cleaned.find("{", idx)
+            if start == -1:
+                break
+            try:
+                obj, end = decoder.raw_decode(cleaned[start:])
+                if isinstance(obj, dict):
+                    objects.append(obj)
+                # Move index forward relative to original string.
+                idx = start + max(end, 1)
+            except Exception:
+                idx = start + 1
+
+        return objects
+
+    @staticmethod
+    def _extract_balanced_braces_segment(text: str, start_idx: int) -> Optional[str]:
+        """Return balanced {...} segment starting at start_idx, if any."""
+        if start_idx < 0 or start_idx >= len(text) or text[start_idx] != "{":
             return None
+
+        depth = 0
+        in_string = False
+        escaped = False
+        quote_char = ""
+
+        for i in range(start_idx, len(text)):
+            ch = text[i]
+
+            if in_string:
+                if escaped:
+                    escaped = False
+                    continue
+                if ch == "\\":
+                    escaped = True
+                    continue
+                if ch == quote_char:
+                    in_string = False
+                continue
+
+            if ch in ('"', "'"):
+                in_string = True
+                quote_char = ch
+                continue
+
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start_idx:i + 1]
+
+        return None
+
+    @staticmethod
+    def _extract_tool_call_from_text(text: str) -> Optional[Dict[str, Any]]:
+        """Best-effort extractor for malformed tool_call payloads in raw text."""
+        if not text:
+            return None
+
+        # Fast path: locate tool_call block.
+        key_idx = text.find('"tool_call"')
+        if key_idx == -1:
+            key_idx = text.find("'tool_call'")
+        if key_idx == -1:
+            return None
+
+        # Parse from the outer object containing "tool_call".
+        outer_start = text.rfind("{", 0, key_idx)
+        brace_idx = outer_start if outer_start != -1 else text.find("{", key_idx)
+        if brace_idx == -1:
+            return None
+
+        segment = ToolBoundConfigurableAIAdapter._extract_balanced_braces_segment(text, brace_idx)
+        if not segment:
+            # Recover from truncated payload by balancing braces to end.
+            tail = text[brace_idx:].strip()
+            open_count = tail.count("{")
+            close_count = tail.count("}")
+            if open_count > close_count:
+                tail = tail + ("}" * (open_count - close_count))
+            segment = tail
+
+        # Try strict JSON first.
         try:
-            return json.loads(match.group(0))
+            obj = json.loads(segment)
+            parsed = ToolBoundConfigurableAIAdapter._extract_tool_call_from_dict(obj) if isinstance(obj, dict) else None
+            if parsed:
+                return parsed
         except Exception:
+            pass
+
+        # Try Python-dict style payloads (single quotes / True False / None).
+        try:
+            obj = ast.literal_eval(segment)
+            parsed = ToolBoundConfigurableAIAdapter._extract_tool_call_from_dict(obj) if isinstance(obj, dict) else None
+            if parsed:
+                return parsed
+        except Exception:
+            pass
+
+        return None
+
+    @staticmethod
+    def _normalize_tool_args(raw_args: Any) -> Optional[Dict[str, Any]]:
+        """Normalize tool arguments to dictionary if possible."""
+        if isinstance(raw_args, dict):
+            return raw_args
+
+        if isinstance(raw_args, str):
+            stripped = raw_args.strip()
+            if not stripped:
+                return {}
+            try:
+                parsed = json.loads(stripped)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                return None
+
+        return None
+
+    @staticmethod
+    def _extract_tool_call_from_dict(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Normalize supported tool-call payload variants to {name,args}."""
+        if not isinstance(data, dict):
             return None
+
+        # Variant 0: direct payload {"name": "x", "arguments": {...}}
+        direct_name = data.get("name")
+        if isinstance(direct_name, str):
+            direct_args = ToolBoundConfigurableAIAdapter._normalize_tool_args(
+                data.get("arguments", {})
+            )
+            if isinstance(direct_args, dict):
+                return {"name": direct_name.strip(), "args": direct_args}
+
+        # Variant 1: {"tool_call": {"name": "x", "arguments": {...}}}
+        direct = data.get("tool_call")
+        if isinstance(direct, dict):
+            name = direct.get("name")
+            args = ToolBoundConfigurableAIAdapter._normalize_tool_args(
+                direct.get("arguments", {})
+            )
+            if isinstance(name, str) and isinstance(args, dict):
+                return {"name": name.strip(), "args": args}
+
+        # Variant 2: OpenAI-style {"tool_calls": [{"function": {"name":..., "arguments": ...}}]}
+        tool_calls = data.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            first = tool_calls[0]
+            if isinstance(first, dict):
+                fn = first.get("function") if isinstance(first.get("function"), dict) else first
+                if isinstance(fn, dict):
+                    name = fn.get("name")
+                    args = ToolBoundConfigurableAIAdapter._normalize_tool_args(
+                        fn.get("arguments", {})
+                    )
+                    if isinstance(name, str) and isinstance(args, dict):
+                        return {"name": name.strip(), "args": args}
+
+        return None
 
     @staticmethod
     def _to_langchain_messages(messages: List[Any]) -> List[Dict[str, str]]:
@@ -421,32 +603,67 @@ class ToolBoundConfigurableAIAdapter:
 
         text = await self._manager.generate_text_async(prompt)
         data = self._extract_json_object(text)
+        candidates = self._extract_json_objects(text)
+        if isinstance(data, dict):
+            candidates.insert(0, data)
+
+        # De-duplicate candidates while preserving order.
+        unique_candidates: List[Dict[str, Any]] = []
+        seen_serialized = set()
+        for candidate in candidates:
+            try:
+                marker = json.dumps(candidate, sort_keys=True, ensure_ascii=False)
+            except Exception:
+                marker = str(candidate)
+            if marker in seen_serialized:
+                continue
+            seen_serialized.add(marker)
+            unique_candidates.append(candidate)
+
+        expanded_candidates: List[Dict[str, Any]] = []
+        for candidate in unique_candidates:
+            expanded_candidates.append(candidate)
+            for key in ("response", "result", "output"):
+                nested = candidate.get(key)
+                if isinstance(nested, dict):
+                    expanded_candidates.append(nested)
+
+        selected_tool_call = None
+        selected_final = None
+        for candidate in expanded_candidates:
+            tool_call_payload = self._extract_tool_call_from_dict(candidate)
+            if tool_call_payload and tool_call_payload.get("name"):
+                selected_tool_call = tool_call_payload
+                break
+            if selected_final is None and isinstance(candidate.get("final"), str):
+                selected_final = candidate.get("final")
+
+        if selected_tool_call is None:
+            selected_tool_call = self._extract_tool_call_from_text(text)
 
         forced = self._resolve_tool_choice_name()
-        if isinstance(data, dict) and isinstance(data.get("tool_call"), dict):
-            tool_call = data["tool_call"]
-            name = tool_call.get("name")
-            args = tool_call.get("arguments", {})
-            if isinstance(name, str) and isinstance(args, dict):
-                if forced is not None and name != forced:
-                    data["tool_call"]["name"] = forced
-                    data["tool_call"]["arguments"] = {}
-                    name = forced
-                    args = {}
-                if isinstance(name, str) and isinstance(args, dict):
-                    return AIMessage(
-                        content="",
-                        tool_calls=[
-                            {
-                                "id": f"call_{uuid.uuid4().hex[:16]}",
-                                "name": name,
-                                "args": args,
-                            }
-                        ],
-                    )
+        if selected_tool_call:
+            name = selected_tool_call.get("name", "")
+            args = selected_tool_call.get("args", {})
+            if forced is not None and name != forced:
+                name = forced
+                args = {}
+            if isinstance(name, str):
+                name = name.strip()
+            if name and isinstance(args, dict):
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": f"call_{uuid.uuid4().hex[:16]}",
+                            "name": name,
+                            "args": args,
+                        }
+                    ],
+                )
 
-        if isinstance(data, dict) and isinstance(data.get("final"), str):
-            return AIMessage(content=data["final"])
+        if isinstance(selected_final, str):
+            return AIMessage(content=selected_final)
 
         return AIMessage(content=text)
 

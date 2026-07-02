@@ -28,6 +28,11 @@ from .llm_router_config_store import (
     SUPPORTED_PROVIDERS,
 )
 from .llm_router import get_configured_llm_manager, invalidate_llm_cache
+from .langchain_adapter import (
+    ConfigurableAIChatModel,
+    ConfigurableAIToolBoundChatModel,
+    create_langchain_chat_model,
+)
 
 __version__ = "0.1.0"
 
@@ -48,4 +53,8 @@ __all__ = [
     "SUPPORTED_PROVIDERS",
     "get_configured_llm_manager",
     "invalidate_llm_cache",
+    # LangChain Adapter
+    "ConfigurableAIChatModel",
+    "ConfigurableAIToolBoundChatModel",
+    "create_langchain_chat_model",
 ]
