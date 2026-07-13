@@ -84,6 +84,59 @@ def _auto_provision_workspace_config(workspace_id: int) -> bool:
         return False
 
 
+def _auto_provision_agent_config_from_workspace(workspace_id: int, agent_id: int) -> bool:
+    """
+    Auto-provision agent-level config by copying from workspace default.
+    
+    If no agent-specific configuration exists, creates one using the workspace
+    default configuration values. If workspace config also doesn't exist,
+    attempts to create it first from environment variables.
+    
+    Returns True if provisioning succeeded or config already exists, False otherwise.
+    """
+    # Check if agent config already exists
+    existing_agent_config = llm_router_config_store.get_configuration(workspace_id, agent_id)
+    if existing_agent_config:
+        logger.debug(f"Agent config already exists for workspace {workspace_id}, agent {agent_id}")
+        return True
+    
+    # Get workspace default config
+    workspace_config = llm_router_config_store.get_configuration(workspace_id, None)
+    
+    # If workspace config doesn't exist, try to create it from env vars first
+    if not workspace_config:
+        logger.info(f"No workspace config found for workspace {workspace_id}, attempting auto-provision from env vars")
+        provisioned = _auto_provision_workspace_config(workspace_id)
+        if not provisioned:
+            logger.warning(f"No workspace default config to copy for agent {agent_id} in workspace {workspace_id}")
+            return False
+        workspace_config = llm_router_config_store.get_configuration(workspace_id, None)
+    
+    if not workspace_config:
+        logger.warning(f"No workspace default config to copy for agent {agent_id} in workspace {workspace_id}")
+        return False
+    
+    try:
+        # Use bulk_create_agent_configurations with single agent_id
+        # This handles getting default model from credentials and setting up configured_models
+        created = llm_router_config_store.bulk_create_agent_configurations(
+            workspace_id=workspace_id,
+            agent_ids=[agent_id],
+            configured_providers=workspace_config.get("configured_providers") or ["azure"],
+            current_provider=workspace_config.get("current_provider") or "azure",
+            user_id=None,
+        )
+        if created:
+            logger.info(f"Auto-provisioned agent config for agent {agent_id} in workspace {workspace_id} from workspace default")
+            return True
+        else:
+            logger.debug(f"Agent config already existed for workspace {workspace_id}, agent {agent_id}")
+            return True
+    except Exception as e:
+        logger.error(f"Failed to auto-provision agent config for agent {agent_id} in workspace {workspace_id}: {e}")
+        return False
+
+
 def get_configured_llm_manager(
     workspace_id: int,
     agent_id: Optional[int] = None,
@@ -98,6 +151,9 @@ def get_configured_llm_manager(
     If no configuration exists for the workspace, auto-provisions one from
     AZURE_OPENAI_LLM_MODEL_* environment variables so that fresh deployments
     work without manual setup.
+    
+    If no configuration exists for a specific agent, creates it by copying
+    from the workspace default configuration.
 
     Special case: If agent_id = -1, always return azure provider.
 
@@ -153,13 +209,27 @@ def get_configured_llm_manager(
 
     logger.debug(f"Creating new LLM manager for workspace {workspace_id}, agent {agent_id}")
     manager = ConfigurableAIManager()
-    config = llm_router_config_store.get_effective_configuration(workspace_id, agent_id)
-
-    # Auto-provision from env vars if no config exists for this workspace
-    if not config:
+    
+    # Step 1: Check if workspace config exists, auto-provision from env vars if not
+    workspace_config = llm_router_config_store.get_configuration(workspace_id, None)
+    if not workspace_config:
+        logger.info(f"No workspace config found for workspace {workspace_id}, attempting auto-provision from env vars")
         provisioned = _auto_provision_workspace_config(workspace_id)
-        if provisioned:
-            config = llm_router_config_store.get_effective_configuration(workspace_id, agent_id)
+        if not provisioned:
+            raise ValueError(
+                f"No LLM configured for workspace {workspace_id}, "
+                "and auto-provisioning from environment variables failed. "
+                "Ensure AZURE_OPENAI_LLM_MODEL_API_KEY, AZURE_OPENAI_LLM_MODEL_API_BASE, "
+                "and AZURE_OPENAI_LLM_MODEL_LLM_MODEL env vars are set, or configure "
+                "via admin_configure_llm_provider."
+            )
+    
+    # Step 2: If agent_id is provided and agent config doesn't exist, create from workspace default
+    if agent_id is not None:
+        _auto_provision_agent_config_from_workspace(workspace_id, agent_id)
+    
+    # Step 3: Get the effective configuration (agent-specific or workspace default)
+    config = llm_router_config_store.get_effective_configuration(workspace_id, agent_id)
 
     if not config:
         raise ValueError(
