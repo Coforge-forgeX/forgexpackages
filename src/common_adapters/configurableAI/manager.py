@@ -770,8 +770,8 @@ class ConfigurableAIManager:
         
         # Ensure consistent max_tokens default for all providers
         if 'max_tokens' not in final_kwargs:
-            final_kwargs['max_tokens'] = 10000
-            logger.debug(f"Setting default max_tokens=10000 for provider: {provider_name}")
+            final_kwargs['max_tokens'] = int(os.getenv('AI_MAX_TOKENS', 10000))
+            logger.debug(f"Setting default max_tokens={final_kwargs['max_tokens']} for provider: {provider_name}")
         
         logger.info(f"Generating text using provider: {provider_name} with max_tokens={final_kwargs.get('max_tokens')}")
         return await self._providers[provider_name].generate_text(prompt, **final_kwargs)
