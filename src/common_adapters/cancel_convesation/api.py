@@ -392,12 +392,13 @@ def cancel_conversation(
         reason=reason,
     )
 
-    # Persisting cancellation to a shared store is useful for multi-process setups,
-    # but it also risks poisoning an entire conversation (same conversation_id) if
-    # the client reuses the conversation_id for subsequent prompts.
-    #
-    # For BA/UI semantics, cancellation is intended to stop ONLY the in-flight
-    # request. We therefore keep cancellation process-local and short-lived.
+    # Persisting cancellation to a shared store is useful for multi-process setups.
+    # The 15-second TTL prevents poisoning subsequent requests in the same conversation.
+
+    # Write to Redis for multi-worker support
+    _run_coroutine_sync(_store.mark_cancelled(key, req))
+
+    # ALSO write to local memory for same-worker fast path
     with _store._lock:
         _store._mem[_mem_key(key)] = {"cancelled": True, "ts": time.time(), "key": key}
 
@@ -406,7 +407,8 @@ def cancel_conversation(
     # causes subsequent requests (same conversation_id) to potentially inherit
     # stale state.
 
-    # Auto-clear so subsequent prompts in the same conversation work normally.
+    # Auto-clear local memory so subsequent prompts work normally
+    # Redis auto-expires via REDIS_EXPIRY_SECONDS
     def _clear_later():
         time.sleep(_CANCEL_TTL_SECONDS)
         with _store._lock:
