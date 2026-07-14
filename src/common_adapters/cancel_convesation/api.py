@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import time
 from dataclasses import asdict, dataclass
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class CancelledError(RuntimeError):
@@ -97,6 +100,7 @@ class _CancellationStore:
         cache = self._get_cache()
         if cache is not None:
             try:
+                logger.info(f"[CANCEL_CHECK] Checking Redis for cancellation key: {key}")
                 result = await cache.retrieve_data(key)
                 if result and result.get("status") == "success":
                     data = result.get("data", {})
@@ -107,20 +111,32 @@ class _CancellationStore:
                         ts = float(payload.get("ts") or 0)
                         if ts and (time.time() - ts) <= _CANCEL_TTL_SECONDS:
                             # Found active cancellation in Redis - return True
+                            logger.info(f"[CANCEL_CHECK] ✅ CANCELLED - Found active cancellation in Redis for key: {key}")
                             return True
-            except Exception:
+                        else:
+                            logger.info(f"[CANCEL_CHECK] Found in Redis but EXPIRED (age: {time.time() - ts:.1f}s, TTL: {_CANCEL_TTL_SECONDS}s)")
+                    else:
+                        logger.info(f"[CANCEL_CHECK] Key {key} not found in Redis data")
+                else:
+                    logger.info(f"[CANCEL_CHECK] Redis retrieve returned: {result}")
+            except Exception as e:
                 # Fall back to local memory on Redis errors
-                pass
+                logger.error(f"[CANCEL_CHECK] Redis error for key {key}: {e}")
+        else:
+            logger.warning(f"[CANCEL_CHECK] ⚠️ Redis cache is None - using local memory only (multi-worker cancellation will NOT work!)")
 
         # Fallback: Process-local check (works for single-worker / local dev)
         with self._lock:
             payload = self._mem.get(self._prefix + key)
             if not payload:
+                logger.info(f"[CANCEL_CHECK] Key {key} not found in local memory either")
                 return False
             ts = float(payload.get("ts") or 0)
             if ts and (time.time() - ts) > _CANCEL_TTL_SECONDS:
                 self._mem.pop(self._prefix + key, None)
+                logger.info(f"[CANCEL_CHECK] Found in local memory but EXPIRED")
                 return False
+            logger.info(f"[CANCEL_CHECK] ✅ CANCELLED - Found in local memory for key: {key}")
             return True
 
     def clear_cancelled(self, key: str) -> None:
