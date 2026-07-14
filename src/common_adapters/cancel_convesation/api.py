@@ -92,9 +92,27 @@ class _CancellationStore:
             self._mem[self._prefix + key] = payload
 
     async def is_cancelled(self, key: str) -> bool:
-        # The BA cancel semantics are intentionally process-local (one-shot).
-        # Do not consult shared caches here, or you risk poisoning a whole
-        # conversation across subsequent prompts.
+        # AZURE FIX: Check Redis first for multi-worker scenarios
+        # The 15-second TTL prevents poisoning subsequent requests in the same conversation
+        cache = self._get_cache()
+        if cache is not None:
+            try:
+                result = await cache.retrieve_data(key)
+                if result and result.get("status") == "success":
+                    data = result.get("data", {})
+                    cached = data.get(key)
+                    if cached:
+                        import json as _json
+                        payload = _json.loads(cached) if isinstance(cached, str) else cached
+                        ts = float(payload.get("ts") or 0)
+                        if ts and (time.time() - ts) <= _CANCEL_TTL_SECONDS:
+                            # Found active cancellation in Redis - return True
+                            return True
+            except Exception:
+                # Fall back to local memory on Redis errors
+                pass
+
+        # Fallback: Process-local check (works for single-worker / local dev)
         with self._lock:
             payload = self._mem.get(self._prefix + key)
             if not payload:
