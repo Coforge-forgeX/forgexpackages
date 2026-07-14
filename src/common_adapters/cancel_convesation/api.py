@@ -259,34 +259,29 @@ def register_task(
 
     key = _cancellation_key(job_id=job_id, conversation_id=conversation_id)
 
-    # ALWAYS create a fresh token for each new request to avoid state leaks
-    tok = CancellationToken(key)
-
     with _tok_lock:
-        # Remove any old token first (from previous request with same conversation_id)
-        old_tok = _tokens.pop(key, None)
-        if old_tok:
-            logger.info(f"[REGISTER_TASK] Replacing old token for key {key}")
+        tok = _tokens.get(key)
+        if not tok:
+            tok = CancellationToken(key)
+            _tokens[key] = tok
+            logger.info(f"[REGISTER_TASK] Created new token for key {key}")
+        else:
+            logger.info(f"[REGISTER_TASK] Reusing existing token for key {key}")
 
-        # Register the new token
-        _tokens[key] = tok
-
-        # Check for stale cancellation flags from previous requests
+        # If a cancel was requested before task registration, cancel immediately
         with _store._lock:
             payload = _store._mem.get(_mem_key(key))
             ts = float((payload or {}).get("ts") or 0)
             recently_cancelled = bool(payload) and (not ts or (time.time() - ts) <= _CANCEL_TTL_SECONDS)
 
         if recently_cancelled:
-            # This is likely a stale flag from a previous request - clear it!
-            logger.warning(f"[REGISTER_TASK] Found stale cancellation flag for key {key}, clearing it")
-            with _store._lock:
-                _store._mem.pop(_mem_key(key), None)
-            # Don't cancel this NEW task - it's a fresh request!
+            logger.info(f"[REGISTER_TASK] Cancellation flag found for key {key}, cancelling task immediately")
+            try:
+                task.cancel()
+            except Exception as e:
+                logger.warning(f"[REGISTER_TASK] Failed to cancel task: {e}")
 
-        # Associate the task with the token
         tok._task = task
-        logger.info(f"[REGISTER_TASK] Registered task for key {key}")
 
 
 def unregister_task(*, job_id: Optional[str] = None, conversation_id: Optional[str] = None) -> None:
