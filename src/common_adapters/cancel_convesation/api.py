@@ -258,37 +258,49 @@ def register_task(
     """
 
     key = _cancellation_key(job_id=job_id, conversation_id=conversation_id)
+
+    # ALWAYS create a fresh token for each new request to avoid state leaks
+    tok = CancellationToken(key)
+
     with _tok_lock:
-        tok = _tokens.get(key)
-        if not tok:
-            tok = CancellationToken(key)
-            _tokens[key] = tok
-        # If a cancel was requested slightly before task registration, cancel
-        # immediately so the caller returns without waiting.
+        # Remove any old token first (from previous request with same conversation_id)
+        old_tok = _tokens.pop(key, None)
+        if old_tok:
+            logger.info(f"[REGISTER_TASK] Replacing old token for key {key}")
+
+        # Register the new token
+        _tokens[key] = tok
+
+        # Check for stale cancellation flags from previous requests
         with _store._lock:
             payload = _store._mem.get(_mem_key(key))
             ts = float((payload or {}).get("ts") or 0)
             recently_cancelled = bool(payload) and (not ts or (time.time() - ts) <= _CANCEL_TTL_SECONDS)
 
         if recently_cancelled:
-            try:
-                task.cancel()
-            except Exception:
-                pass
+            # This is likely a stale flag from a previous request - clear it!
+            logger.warning(f"[REGISTER_TASK] Found stale cancellation flag for key {key}, clearing it")
+            with _store._lock:
+                _store._mem.pop(_mem_key(key), None)
+            # Don't cancel this NEW task - it's a fresh request!
+
+        # Associate the task with the token
         tok._task = task
+        logger.info(f"[REGISTER_TASK] Registered task for key {key}")
 
 
 def unregister_task(*, job_id: Optional[str] = None, conversation_id: Optional[str] = None) -> None:
     key = _cancellation_key(job_id=job_id, conversation_id=conversation_id)
     with _tok_lock:
-        tok = _tokens.get(key)
+        tok = _tokens.pop(key, None)  # Use pop to ensure removal
         if tok is not None:
             try:
                 tok._task = None
-            except Exception:
-                pass
-            # Best-effort cleanup to avoid leaking tokens across requests.
-            _tokens.pop(key, None)
+                # Clear the token's internal state
+                tok._evt.clear()
+            except Exception as e:
+                logger.warning(f"[UNREGISTER_TASK] Error clearing token for key {key}: {e}")
+        logger.info(f"[UNREGISTER_TASK] Unregistered task for key {key}")
 
 
 def unregister_cancellation(*, job_id: Optional[str] = None, conversation_id: Optional[str] = None) -> None:
