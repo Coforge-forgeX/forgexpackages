@@ -23,7 +23,6 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.callbacks import CallbackManagerForLLMRun, AsyncCallbackManagerForLLMRun
 
 from .provider import TrustAIProvider
-from .database import TrustAIDatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -36,17 +35,18 @@ class TrustAIChatModel(BaseChatModel):
     for any LangChain chat model (like AzureChatOpenAI, ChatOpenAI, etc.) in
     LangChain chains, agents, and LangGraph applications.
 
+    This version is decoupled from the database - it receives a configuration
+    dict instead of a database manager.
+
     Example usage:
         ```python
-        from common_adapters.trustai import TrustAIDatabaseManager, TrustAIChatModel
+        from common_adapters.trustai import get_llm_helper
 
-        # Create database manager
-        db_manager = TrustAIDatabaseManager(database_url)
-        db_manager.initialize_tables()
+        # Get LLM helper
+        helper = get_llm_helper(database_url)
 
-        # Create LangChain-compatible chat model
-        llm = TrustAIChatModel(
-            db_manager=db_manager,
+        # Get LangChain-compatible chat model
+        llm = helper.get_router_llm(
             workspace_id="ws_123",
             agent_id=1,
             user_id=42
@@ -58,8 +58,8 @@ class TrustAIChatModel(BaseChatModel):
         ```
     """
 
-    db_manager: TrustAIDatabaseManager
-    """Database manager instance."""
+    config: Dict[str, Any]
+    """Provider configuration dict."""
 
     workspace_id: str
     """Workspace UUID string."""
@@ -97,10 +97,7 @@ class TrustAIChatModel(BaseChatModel):
 
     def __init__(
         self,
-        db_manager: TrustAIDatabaseManager,
-        workspace_id: str,
-        agent_id: int,
-        user_id: Optional[int] = None,
+        config: Dict[str, Any],
         user_email: Optional[str] = None,
         temperature: Optional[float] = 0.7,
         max_tokens: Optional[int] = 1000,
@@ -112,11 +109,8 @@ class TrustAIChatModel(BaseChatModel):
         Initialize the LangChain-compatible chat model.
 
         Args:
-            db_manager: TrustAIDatabaseManager instance
-            workspace_id: Workspace UUID string
-            agent_id: Agent ID
-            user_id: User ID (optional)
-            user_email: User email (optional)
+            config: Configuration dict from get_provider_configuration()
+            user_email: User email (optional, overrides config user_id)
             temperature: Sampling temperature
             max_tokens: Maximum tokens to generate
             top_p: Nucleus sampling parameter
@@ -124,10 +118,10 @@ class TrustAIChatModel(BaseChatModel):
             **kwargs: Additional model parameters
         """
         super().__init__(
-            db_manager=db_manager,
-            workspace_id=workspace_id,
-            agent_id=agent_id,
-            user_id=user_id,
+            config=config,
+            workspace_id=config['workspace_id'],
+            agent_id=config['agent_id'],
+            user_id=config.get('user_id'),
             user_email=user_email,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -144,11 +138,8 @@ class TrustAIChatModel(BaseChatModel):
     def _get_provider(self) -> TrustAIProvider:
         """Get or create the TrustAI provider instance."""
         if self._provider is None:
-            self._provider = TrustAIProvider(
-                db_manager=self.db_manager,
-                workspace_id=self.workspace_id,
-                agent_id=self.agent_id,
-                user_id=self.user_id,
+            self._provider = TrustAIProvider.from_configuration(
+                config=self.config,
                 user_email=self.user_email
             )
         return self._provider
@@ -313,10 +304,7 @@ class TrustAIChatModel(BaseChatModel):
 
         # Create new instance with tools in model_kwargs
         return self.__class__(
-            db_manager=self.db_manager,
-            workspace_id=self.workspace_id,
-            agent_id=self.agent_id,
-            user_id=self.user_id,
+            config=self.config,
             user_email=self.user_email,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
@@ -367,32 +355,33 @@ class TrustAIChatModel(BaseChatModel):
 
 
 def get_trustai_chat_model(
-    db_manager: TrustAIDatabaseManager,
-    workspace_id: str,
-    agent_id: int,
-    user_id: Optional[int] = None,
+    config: Dict[str, Any],
     user_email: Optional[str] = None,
     **kwargs
 ) -> TrustAIChatModel:
     """
     Factory function to create TrustAI chat model.
 
+    DEPRECATED: Use TrustAILLMHelper.get_router_llm() instead.
+
     Args:
-        db_manager: Database manager instance
-        workspace_id: Workspace UUID string
-        agent_id: Agent ID
-        user_id: User ID (optional)
+        config: Configuration dict from get_provider_configuration()
         user_email: User email (optional)
         **kwargs: Additional model parameters
 
     Returns:
         TrustAIChatModel instance
+
+    Example:
+        ```python
+        from common_adapters.trustai import get_llm_helper
+
+        helper = get_llm_helper(database_url)
+        llm = helper.get_router_llm(workspace_id, agent_id, user_id)
+        ```
     """
     return TrustAIChatModel(
-        db_manager=db_manager,
-        workspace_id=workspace_id,
-        agent_id=agent_id,
-        user_id=user_id,
+        config=config,
         user_email=user_email,
         **kwargs
     )

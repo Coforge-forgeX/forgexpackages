@@ -8,7 +8,6 @@ import logging
 from typing import Dict, Any, Optional, List
 import httpx
 
-from .database import TrustAIDatabaseManager
 from .endpoints import TrustAIEndpoints
 
 logger = logging.getLogger(__name__)
@@ -20,62 +19,105 @@ class TrustAIProvider:
 
     Features:
     - Chat completions with guardrails
-    - Auto-resolves provider models based on hierarchy
+    - Decoupled from database layer
     - Sends proper TrustAI headers
     - Compatible with LangChain integration
     """
 
     def __init__(
         self,
-        db_manager: TrustAIDatabaseManager,
+        x_app_id: str,
+        x_api_key: str,
+        api_endpoint: str,
+        trustai_model_key: str,
+        provider_name: str,
+        deployment_name: str,
         workspace_id: str,
         agent_id: int,
         user_id: Optional[int] = None,
         user_email: Optional[str] = None
     ):
         """
-        Initialize TrustAI provider.
+        Initialize TrustAI provider with credentials.
+
+        This constructor is decoupled from the database layer.
+        Use WorkspaceIntegration.get_provider_configuration() to fetch credentials.
 
         Args:
-            db_manager: TrustAIDatabaseManager instance
+            x_app_id: TrustAI application ID
+            x_api_key: TrustAI API key
+            api_endpoint: TrustAI API endpoint URL
+            trustai_model_key: TrustAI model key (e.g., "gpt-4-1")
+            provider_name: Provider name (e.g., "azure")
+            deployment_name: Deployment name (e.g., "gpt-4-1")
             workspace_id: UUID string of the workspace
             agent_id: Agent ID
             user_id: User ID (optional)
             user_email: User email (optional, for tracking)
         """
-        self.db = db_manager
+        self.x_app_id = x_app_id
+        self.x_api_key = x_api_key
+        self.api_endpoint = api_endpoint
+        self.trustai_model_key = trustai_model_key
+        self.provider_name = provider_name
+        self.deployment_name = deployment_name
         self.workspace_id = workspace_id
         self.agent_id = agent_id
         self.user_id = user_id
         self.user_email = user_email
         self.endpoints = TrustAIEndpoints
 
-        # Load workspace config
-        self.workspace_config = self.db.get_workspace_config(workspace_id)
-        if not self.workspace_config:
-            raise ValueError(
-                f"No TrustAI configuration found for workspace {workspace_id}. "
-                "Please register the workspace first."
-            )
-
-        # Resolve provider model
-        self.provider_model = self.db.resolve_provider_model(
-            workspace_id=workspace_id,
-            agent_id=agent_id,
-            user_id=user_id
-        )
-        if not self.provider_model:
-            raise ValueError(
-                f"No provider model found for workspace={workspace_id}, "
-                f"agent={agent_id}, user={user_id}. "
-                "Please configure a provider model first."
-            )
-
         logger.info(
             f"[TRUSTAI-PROVIDER] Initialized | workspace={workspace_id} | "
             f"agent={agent_id} | user={user_id} | "
-            f"provider={self.provider_model.provider_name} | "
-            f"model={self.provider_model.deployment_name}"
+            f"provider={provider_name} | "
+            f"model={deployment_name}"
+        )
+
+    @classmethod
+    def from_configuration(
+        cls,
+        config: Dict[str, Any],
+        user_email: Optional[str] = None
+    ) -> "TrustAIProvider":
+        """
+        Create provider from configuration dict.
+
+        This is the recommended way to initialize the provider.
+        Get config from WorkspaceIntegration.get_provider_configuration().
+
+        Args:
+            config: Configuration dict from get_provider_configuration()
+            user_email: User email (optional, overrides config user_id)
+
+        Returns:
+            TrustAIProvider instance
+
+        Example:
+            ```python
+            integration = TrustAIWorkspaceIntegration(db_manager)
+            config = integration.get_provider_configuration(
+                workspace_id="ws_123",
+                agent_id=1,
+                user_id=42
+            )
+            provider = TrustAIProvider.from_configuration(config)
+            ```
+        """
+        workspace_config = config['workspace_config']
+        provider_model = config['provider_model']
+
+        return cls(
+            x_app_id=workspace_config['x_app_id'],
+            x_api_key=workspace_config['x_api_key'],
+            api_endpoint=workspace_config['api_endpoint'],
+            trustai_model_key=provider_model['trustai_model_key'],
+            provider_name=provider_model['provider_name'],
+            deployment_name=provider_model['deployment_name'],
+            workspace_id=config['workspace_id'],
+            agent_id=config['agent_id'],
+            user_id=config.get('user_id'),
+            user_email=user_email
         )
 
     def _build_headers(self) -> Dict[str, str]:
@@ -83,8 +125,8 @@ class TrustAIProvider:
         headers = {
             "accept": "application/json",
             "Content-Type": "application/json",
-            "X-Api-Key": self.workspace_config.x_api_key,
-            "X-App-Id": self.workspace_config.x_app_id,
+            "X-Api-Key": self.x_api_key,
+            "X-App-Id": self.x_app_id,
             "X-Agent-Id": str(self.agent_id)
         }
 
@@ -194,7 +236,7 @@ class TrustAIProvider:
 
         payload = {
             "messages": messages,
-            "model": self.provider_model.trustai_model_key,
+            "model": self.trustai_model_key,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "top_p": top_p
@@ -205,7 +247,7 @@ class TrustAIProvider:
 
         logger.debug(
             f"[TRUSTAI-PROVIDER] Calling chat/completions | "
-            f"model={self.provider_model.trustai_model_key} | "
+            f"model={self.trustai_model_key} | "
             f"messages={len(messages)}"
         )
 
@@ -277,7 +319,7 @@ class TrustAIProvider:
 
         payload = {
             "messages": messages,
-            "model": self.provider_model.trustai_model_key,
+            "model": self.trustai_model_key,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "tools": tools,
@@ -287,7 +329,7 @@ class TrustAIProvider:
 
         logger.debug(
             f"[TRUSTAI-PROVIDER] Calling chat/completions with tools | "
-            f"model={self.provider_model.trustai_model_key} | "
+            f"model={self.trustai_model_key} | "
             f"messages={len(messages)} | tools={len(tools)}"
         )
 
@@ -325,9 +367,9 @@ class TrustAIProvider:
             Dict with provider, model, and key information
         """
         return {
-            'provider_name': self.provider_model.provider_name,
-            'deployment_name': self.provider_model.deployment_name,
-            'trustai_model_key': self.provider_model.trustai_model_key,
+            'provider_name': self.provider_name,
+            'deployment_name': self.deployment_name,
+            'trustai_model_key': self.trustai_model_key,
             'workspace_id': self.workspace_id,
             'agent_id': str(self.agent_id)
         }

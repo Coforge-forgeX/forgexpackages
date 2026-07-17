@@ -41,6 +41,7 @@ import asyncio
 from typing import Optional, Union, List, Dict, Any
 
 from .database import TrustAIDatabaseManager
+from .workspace_integration import TrustAIWorkspaceIntegration
 from .provider import TrustAIProvider
 from .langchain_adapter import TrustAIChatModel
 
@@ -58,6 +59,9 @@ class TrustAILLMHelper:
     - Text generation
     - Context-aware conversations
     - LangChain-compatible models
+
+    This helper decouples the provider from the database by using
+    WorkspaceIntegration to fetch credentials separately.
     """
 
     def __init__(self, database_url: str):
@@ -69,6 +73,7 @@ class TrustAILLMHelper:
         """
         self.db_manager = TrustAIDatabaseManager(database_url)
         self.db_manager.initialize_tables()
+        self.integration = TrustAIWorkspaceIntegration(self.db_manager)
         logger.info("TrustAI LLM Helper initialized")
 
     def _normalize_agent_id(self, agent_id: AgentId) -> int:
@@ -110,11 +115,16 @@ class TrustAILLMHelper:
         agent_id = self._normalize_agent_id(agent_id)
 
         try:
-            provider = TrustAIProvider(
-                db_manager=self.db_manager,
+            # Fetch provider configuration from database
+            config = self.integration.get_provider_configuration(
                 workspace_id=workspace_id,
                 agent_id=agent_id,
-                user_id=user_id,
+                user_id=user_id
+            )
+
+            # Create provider with credentials (decoupled from DB)
+            provider = TrustAIProvider.from_configuration(
+                config=config,
                 user_email=user_email
             )
 
@@ -187,11 +197,16 @@ class TrustAILLMHelper:
             history = []
 
         try:
-            provider = TrustAIProvider(
-                db_manager=self.db_manager,
+            # Fetch provider configuration from database
+            config = self.integration.get_provider_configuration(
                 workspace_id=workspace_id,
                 agent_id=agent_id,
-                user_id=user_id,
+                user_id=user_id
+            )
+
+            # Create provider with credentials (decoupled from DB)
+            provider = TrustAIProvider.from_configuration(
+                config=config,
                 user_email=user_email
             )
 
@@ -262,12 +277,16 @@ class TrustAILLMHelper:
             f"agent={agent_id} | user={user_id}"
         )
 
-        # Create and return LangChain-compatible chat model
-        return TrustAIChatModel(
-            db_manager=self.db_manager,
+        # Fetch provider configuration from database
+        config = self.integration.get_provider_configuration(
             workspace_id=workspace_id,
             agent_id=agent_id,
-            user_id=user_id,
+            user_id=user_id
+        )
+
+        # Create and return LangChain-compatible chat model
+        return TrustAIChatModel(
+            config=config,
             user_email=user_email,
             **kwargs
         )
@@ -293,11 +312,16 @@ class TrustAILLMHelper:
         """
         agent_id = self._normalize_agent_id(agent_id)
 
-        return TrustAIProvider(
-            db_manager=self.db_manager,
+        # Fetch provider configuration from database
+        config = self.integration.get_provider_configuration(
             workspace_id=workspace_id,
             agent_id=agent_id,
-            user_id=user_id,
+            user_id=user_id
+        )
+
+        # Create provider with credentials (decoupled from DB)
+        return TrustAIProvider.from_configuration(
+            config=config,
             user_email=user_email
         )
 

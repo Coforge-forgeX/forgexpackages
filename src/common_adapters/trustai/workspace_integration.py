@@ -404,3 +404,76 @@ class TrustAIWorkspaceIntegration:
                 for m in models
             ]
         }
+
+    def get_provider_configuration(
+        self,
+        workspace_id: str,
+        agent_id: int,
+        user_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Get complete provider configuration for initializing TrustAI provider.
+
+        This method decouples the provider from the database by fetching
+        all necessary credentials and configuration in one call.
+
+        Args:
+            workspace_id: UUID string of the workspace
+            agent_id: Agent ID
+            user_id: User ID (optional, for model resolution)
+
+        Returns:
+            Dict containing:
+                - workspace_config: Dict with x_app_id, x_api_key, api_endpoint
+                - provider_model: Dict with provider_name, deployment_name, trustai_model_key
+                - workspace_id: Original workspace ID
+                - agent_id: Original agent ID
+                - user_id: Original user ID (if provided)
+
+        Raises:
+            ValueError: If workspace config or provider model not found
+        """
+        # Fetch workspace configuration
+        workspace_config = self.db.get_workspace_config(workspace_id)
+        if not workspace_config:
+            raise ValueError(
+                f"No TrustAI configuration found for workspace {workspace_id}. "
+                "Please register the workspace first."
+            )
+
+        # Resolve provider model (3-tier hierarchy)
+        provider_model = self.db.resolve_provider_model(
+            workspace_id=workspace_id,
+            agent_id=agent_id,
+            user_id=user_id
+        )
+        if not provider_model:
+            raise ValueError(
+                f"No provider model found for workspace={workspace_id}, "
+                f"agent={agent_id}, user={user_id}. "
+                "Please configure a provider model first."
+            )
+
+        logger.info(
+            f"Fetched provider configuration | workspace={workspace_id} | "
+            f"agent={agent_id} | user={user_id} | "
+            f"provider={provider_model.provider_name} | "
+            f"model={provider_model.deployment_name}"
+        )
+
+        return {
+            'workspace_config': {
+                'x_app_id': workspace_config.x_app_id,
+                'x_api_key': workspace_config.x_api_key,
+                'api_endpoint': workspace_config.api_endpoint
+            },
+            'provider_model': {
+                'provider_name': provider_model.provider_name,
+                'deployment_name': provider_model.deployment_name,
+                'trustai_model_key': provider_model.trustai_model_key,
+                'is_system_default': provider_model.is_system_default
+            },
+            'workspace_id': workspace_id,
+            'agent_id': agent_id,
+            'user_id': user_id
+        }
