@@ -35,3 +35,5 @@ Requires-Dist: PyGithub>=2.0.0
 Requires-Dist: httpx>=0.24.0
 Requires-Dist: langchain-openai>=0.1.0
 Requires-Dist: langgraph>=0.1.0
+Requires-Dist: sqlalchemy>=2.0.0
+Requires-Dist: psycopg2-binary>=2.9.0

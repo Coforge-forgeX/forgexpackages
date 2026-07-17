@@ -35,6 +35,7 @@ src/common_adapters/cancel_convesation/api.py
 src/common_adapters/configurableAI/__init__.py
 src/common_adapters/configurableAI/config.py
 src/common_adapters/configurableAI/examples.py
+src/common_adapters/configurableAI/langchain_adapter.py
 src/common_adapters/configurableAI/llm_router.py
 src/common_adapters/configurableAI/llm_router_config_store.py
 src/common_adapters/configurableAI/manager.py
@@ -103,3 +104,12 @@ src/common_adapters/storage/factory.py
 src/common_adapters/storage/s3_client.py
 src/common_adapters/storage/types.py
 src/common_adapters/storage/utils.py
+src/common_adapters/trustai/__init__.py
+src/common_adapters/trustai/database.py
+src/common_adapters/trustai/endpoints.py
+src/common_adapters/trustai/examples.py
+src/common_adapters/trustai/langchain_adapter.py
+src/common_adapters/trustai/llm_helper.py
+src/common_adapters/trustai/models.py
+src/common_adapters/trustai/provider.py
+src/common_adapters/trustai/workspace_integration.py
