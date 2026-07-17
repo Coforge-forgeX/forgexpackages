@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import time
 from dataclasses import asdict, dataclass
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class CancelledError(RuntimeError):
@@ -92,17 +95,48 @@ class _CancellationStore:
             self._mem[self._prefix + key] = payload
 
     async def is_cancelled(self, key: str) -> bool:
-        # The BA cancel semantics are intentionally process-local (one-shot).
-        # Do not consult shared caches here, or you risk poisoning a whole
-        # conversation across subsequent prompts.
+        # AZURE FIX: Check Redis first for multi-worker scenarios
+        # The 15-second TTL prevents poisoning subsequent requests in the same conversation
+        cache = self._get_cache()
+        if cache is not None:
+            try:
+                logger.info(f"[CANCEL_CHECK] Checking Redis for cancellation key: {key}")
+                result = await cache.retrieve_data(key)
+                if result and result.get("status") == "success":
+                    data = result.get("data", {})
+                    cached = data.get(key)
+                    if cached:
+                        import json as _json
+                        payload = _json.loads(cached) if isinstance(cached, str) else cached
+                        ts = float(payload.get("ts") or 0)
+                        if ts and (time.time() - ts) <= _CANCEL_TTL_SECONDS:
+                            # Found active cancellation in Redis - return True
+                            logger.info(f"[CANCEL_CHECK] ✅ CANCELLED - Found active cancellation in Redis for key: {key}")
+                            return True
+                        else:
+                            logger.info(f"[CANCEL_CHECK] Found in Redis but EXPIRED (age: {time.time() - ts:.1f}s, TTL: {_CANCEL_TTL_SECONDS}s)")
+                    else:
+                        logger.info(f"[CANCEL_CHECK] Key {key} not found in Redis data")
+                else:
+                    logger.info(f"[CANCEL_CHECK] Redis retrieve returned: {result}")
+            except Exception as e:
+                # Fall back to local memory on Redis errors
+                logger.error(f"[CANCEL_CHECK] Redis error for key {key}: {e}")
+        else:
+            logger.warning(f"[CANCEL_CHECK] ⚠️ Redis cache is None - using local memory only (multi-worker cancellation will NOT work!)")
+
+        # Fallback: Process-local check (works for single-worker / local dev)
         with self._lock:
             payload = self._mem.get(self._prefix + key)
             if not payload:
+                logger.info(f"[CANCEL_CHECK] Key {key} not found in local memory either")
                 return False
             ts = float(payload.get("ts") or 0)
             if ts and (time.time() - ts) > _CANCEL_TTL_SECONDS:
                 self._mem.pop(self._prefix + key, None)
+                logger.info(f"[CANCEL_CHECK] Found in local memory but EXPIRED")
                 return False
+            logger.info(f"[CANCEL_CHECK] ✅ CANCELLED - Found in local memory for key: {key}")
             return True
 
     def clear_cancelled(self, key: str) -> None:
@@ -224,37 +258,44 @@ def register_task(
     """
 
     key = _cancellation_key(job_id=job_id, conversation_id=conversation_id)
+
     with _tok_lock:
         tok = _tokens.get(key)
         if not tok:
             tok = CancellationToken(key)
             _tokens[key] = tok
-        # If a cancel was requested slightly before task registration, cancel
-        # immediately so the caller returns without waiting.
+            logger.info(f"[REGISTER_TASK] Created new token for key {key}")
+        else:
+            logger.info(f"[REGISTER_TASK] Reusing existing token for key {key}")
+
+        # If a cancel was requested before task registration, cancel immediately
         with _store._lock:
             payload = _store._mem.get(_mem_key(key))
             ts = float((payload or {}).get("ts") or 0)
             recently_cancelled = bool(payload) and (not ts or (time.time() - ts) <= _CANCEL_TTL_SECONDS)
 
         if recently_cancelled:
+            logger.info(f"[REGISTER_TASK] Cancellation flag found for key {key}, cancelling task immediately")
             try:
                 task.cancel()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[REGISTER_TASK] Failed to cancel task: {e}")
+
         tok._task = task
 
 
 def unregister_task(*, job_id: Optional[str] = None, conversation_id: Optional[str] = None) -> None:
     key = _cancellation_key(job_id=job_id, conversation_id=conversation_id)
     with _tok_lock:
-        tok = _tokens.get(key)
+        tok = _tokens.pop(key, None)  # Use pop to ensure removal
         if tok is not None:
             try:
                 tok._task = None
-            except Exception:
-                pass
-            # Best-effort cleanup to avoid leaking tokens across requests.
-            _tokens.pop(key, None)
+                # Clear the token's internal state
+                tok._evt.clear()
+            except Exception as e:
+                logger.warning(f"[UNREGISTER_TASK] Error clearing token for key {key}: {e}")
+        logger.info(f"[UNREGISTER_TASK] Unregistered task for key {key}")
 
 
 def unregister_cancellation(*, job_id: Optional[str] = None, conversation_id: Optional[str] = None) -> None:
@@ -351,12 +392,13 @@ def cancel_conversation(
         reason=reason,
     )
 
-    # Persisting cancellation to a shared store is useful for multi-process setups,
-    # but it also risks poisoning an entire conversation (same conversation_id) if
-    # the client reuses the conversation_id for subsequent prompts.
-    #
-    # For BA/UI semantics, cancellation is intended to stop ONLY the in-flight
-    # request. We therefore keep cancellation process-local and short-lived.
+    # Persisting cancellation to a shared store is useful for multi-process setups.
+    # The 15-second TTL prevents poisoning subsequent requests in the same conversation.
+
+    # Write to Redis for multi-worker support
+    _run_coroutine_sync(_store.mark_cancelled(key, req))
+
+    # ALSO write to local memory for same-worker fast path
     with _store._lock:
         _store._mem[_mem_key(key)] = {"cancelled": True, "ts": time.time(), "key": key}
 
@@ -365,7 +407,8 @@ def cancel_conversation(
     # causes subsequent requests (same conversation_id) to potentially inherit
     # stale state.
 
-    # Auto-clear so subsequent prompts in the same conversation work normally.
+    # Auto-clear local memory so subsequent prompts work normally
+    # Redis auto-expires via REDIS_EXPIRY_SECONDS
     def _clear_later():
         time.sleep(_CANCEL_TTL_SECONDS)
         with _store._lock:
