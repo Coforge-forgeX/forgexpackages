@@ -262,19 +262,29 @@ def get_configured_llm_manager(
     cached_manager = _manager_cache.get(key)
     if cached_manager is not None:
         cached_updated_at = _cache_updated_at.get(key)
-        if cached_updated_at == config_updated_at:
+
+        # Defensive backward-compat path: if updated_at is missing in older/malformed
+        # rows, do not trust stale cache.
+        if config_updated_at is None:
+            logger.warning(
+                f"LLM config for workspace {workspace_id}, agent {normalized_agent_id} has no updated_at; "
+                "bypassing cache reuse for safety."
+            )
+            _manager_cache.pop(key, None)
+            _cache_updated_at.pop(key, None)
+        elif cached_updated_at == config_updated_at:
             logger.debug(
                 f"Returning cached LLM manager for workspace {workspace_id}, "
                 f"agent {normalized_agent_id} (config unchanged at {config_updated_at})"
             )
             return cached_manager
-
-        logger.info(
-            f"LLM config updated for workspace {workspace_id}, agent {normalized_agent_id}; "
-            f"rebuilding manager cache (old={cached_updated_at}, new={config_updated_at})"
-        )
-        _manager_cache.pop(key, None)
-        _cache_updated_at.pop(key, None)
+        else:
+            logger.info(
+                f"LLM config updated for workspace {workspace_id}, agent {normalized_agent_id}; "
+                f"rebuilding manager cache (old={cached_updated_at}, new={config_updated_at})"
+            )
+            _manager_cache.pop(key, None)
+            _cache_updated_at.pop(key, None)
 
     logger.debug(f"Creating new LLM manager for workspace {workspace_id}, agent {normalized_agent_id}")
     manager = ConfigurableAIManager()
