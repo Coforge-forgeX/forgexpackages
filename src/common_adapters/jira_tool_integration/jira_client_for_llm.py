@@ -129,8 +129,12 @@ class JiraLLMWrapper:
 
         logger.info(f"Creating issue link with data: {data}")
         
-        
-        return self._jira.create_issue_link(data=data)
+        try:
+            self._jira.create_issue_link(data=data)
+        except Exception as e:
+            return f"{e} occured when creating issues links for {data}"
+
+        return f"Successfully created issue links for {data}"
     
     def create_parent_relationship(
         self,
