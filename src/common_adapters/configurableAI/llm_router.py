@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 # In-memory cache: workspace+agent → manager instance
 _manager_cache: Dict[str, ConfigurableAIManager] = {}
+# Tracks the source config updated_at used to build each cached manager
+_cache_updated_at: Dict[str, object] = {}
 
 AgentId = Union[int, str]
 
@@ -224,12 +226,6 @@ def get_configured_llm_manager(
         )
 
     key = _cache_key(workspace_id, normalized_agent_id)
-    if key in _manager_cache:
-        logger.debug(f"Returning cached LLM manager for workspace {workspace_id}, agent {normalized_agent_id}")
-        return _manager_cache[key]
-
-    logger.debug(f"Creating new LLM manager for workspace {workspace_id}, agent {normalized_agent_id}")
-    manager = ConfigurableAIManager()
     
     # Step 1: Check if workspace config exists, auto-provision from env vars if not
     workspace_config = llm_router_config_store.get_configuration(workspace_id, None)
@@ -260,6 +256,28 @@ def get_configured_llm_manager(
             "and AZURE_OPENAI_LLM_MODEL_LLM_MODEL env vars are set, or configure "
             "via admin_configure_llm_provider."
         )
+
+    config_updated_at = config.get("updated_at")
+
+    cached_manager = _manager_cache.get(key)
+    if cached_manager is not None:
+        cached_updated_at = _cache_updated_at.get(key)
+        if cached_updated_at == config_updated_at:
+            logger.debug(
+                f"Returning cached LLM manager for workspace {workspace_id}, "
+                f"agent {normalized_agent_id} (config unchanged at {config_updated_at})"
+            )
+            return cached_manager
+
+        logger.info(
+            f"LLM config updated for workspace {workspace_id}, agent {normalized_agent_id}; "
+            f"rebuilding manager cache (old={cached_updated_at}, new={config_updated_at})"
+        )
+        _manager_cache.pop(key, None)
+        _cache_updated_at.pop(key, None)
+
+    logger.debug(f"Creating new LLM manager for workspace {workspace_id}, agent {normalized_agent_id}")
+    manager = ConfigurableAIManager()
 
     configured_providers = config.get("configured_providers") or []
     current_provider = config.get("current_provider")
@@ -305,9 +323,25 @@ def get_configured_llm_manager(
         except Exception as e:
             logger.warning(f"Could not set fallback provider '{fallback_provider}' for workspace {workspace_id}: {e}")
 
+    resolved_provider = manager.get_current_provider()
+    resolved_model = current_model
+    if not resolved_model and resolved_provider:
+        configured_models_map = config.get("configured_models") or {}
+        provider_models = configured_models_map.get(resolved_provider) or []
+        resolved_model = provider_models[0] if provider_models else None
+
+    logger.info(
+        f"[LLM-ROUTER][RESOLVED] workspace_id={workspace_id} | agent_id={normalized_agent_id} "
+        f"| provider={resolved_provider} | model={resolved_model} | config_updated_at={config_updated_at}"
+    )
+
     # Cache the configured manager
     _manager_cache[key] = manager
-    logger.debug(f"Cached LLM manager for workspace {workspace_id}, agent {normalized_agent_id} with {len(successfully_configured_providers)} providers")
+    _cache_updated_at[key] = config_updated_at
+    logger.debug(
+        f"Cached LLM manager for workspace {workspace_id}, agent {normalized_agent_id} "
+        f"with {len(successfully_configured_providers)} providers (config_updated_at={config_updated_at})"
+    )
     return manager
 
 
@@ -330,6 +364,7 @@ def invalidate_llm_cache(
     if workspace_id is None:
         # Clear all caches globally
         _manager_cache.clear()
+        _cache_updated_at.clear()
         clear_ai_manager_cache()
         logger.info("Cleared all LLM manager cache globally")
         return
@@ -345,6 +380,7 @@ def invalidate_llm_cache(
         removed_any = False
         for key in keys_to_try:
             removed = _manager_cache.pop(key, None)
+            _cache_updated_at.pop(key, None)
             removed_any = removed_any or (removed is not None)
 
         if removed_any:
@@ -357,6 +393,7 @@ def invalidate_llm_cache(
         removed_count = 0
         for k in keys_to_remove:
             del _manager_cache[k]
+            _cache_updated_at.pop(k, None)
             removed_count += 1
         
         if removed_count > 0:
