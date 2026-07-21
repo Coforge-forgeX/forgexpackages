@@ -46,7 +46,7 @@ class SummarizeOldMessagesStrategy:
                 f"{m.get('role', 'user')}: {m.get('content', '')}" for m in old_msgs
             )
             logger.debug(f"Invoking LLM for summarization with input length {len(summary_input)} characters.")
-            summary = llm.invoke(
+            summary = await llm.invoke_async(
                 sys_prompt=(
                     "You are a context compression assistant.\n\n"
                     "Your task is to reduce the conversation into a compact memory while preserving all important information.\n\n"
