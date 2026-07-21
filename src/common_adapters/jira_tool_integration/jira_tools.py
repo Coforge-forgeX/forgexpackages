@@ -19,6 +19,8 @@ def get_jira_tools(jira_client: Jira) -> list:
     """
     return [
         jira_client.get_issue_transitions_full,
+        jira_client.create_parent_relationship,
+        jira_client.get_project_relationship_rules,
         jira_client.get_issue_status,
         jira_client.get_transition_id_to_status_name,
         jira_client.set_issue_status_by_transition_id,

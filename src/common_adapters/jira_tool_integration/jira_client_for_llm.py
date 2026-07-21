@@ -14,6 +14,14 @@ handler.setFormatter(logging.Formatter(
 ))
 logger.addHandler(handler)
 
+SYSTEM_LINK_TYPES = {
+    "epic-story link",
+    "parent-child link",
+    "parent link",
+    "subtask",
+    "jira portfolio parent link",
+}
+
 class JiraLLMWrapper:
     """
     A wrapper class for the Atlassian Jira client that provides enhanced documentation
@@ -44,6 +52,38 @@ class JiraLLMWrapper:
             cloud=cloud
         )
         
+        
+    def get_field_to_key_mapping(self) -> Dict[str, str]:
+        """
+        Returns a mapping of Jira field display names to Jira field keys.
+
+        Example:
+        {
+            "Summary": "summary",
+            "Description": "description",
+            "Epic Link": "customfield_10014",
+            "Parent Link": "customfield_10016",
+            "Acceptance Criteria": "customfield_10231"
+        }
+
+        This method is intended for LLM workflows where the model must
+        determine which Jira field key corresponds to a user-facing field name.
+
+        Returns:
+            Dict[str, str]: Mapping of field display name -> Jira field key.
+        """
+        logger.info("Fetching Jira field to key mapping")
+
+        fields = self._jira.get("rest/api/3/field")
+        
+        fields_ = {
+            field["name"].strip().lower(): field["id"]
+            for field in fields
+        }
+        
+        # logger.info("Fetched jira fields are:\n%s",fields_)
+        return fields_
+        
     def create_issue_link(self, data: dict):
         """
         Create an issue link between two issues. 
@@ -67,8 +107,166 @@ class JiraLLMWrapper:
         Args:
             data: Dictionary containing link information with required keys: type, inwardIssue, outwardIssue, and optional comment
         """
+
+        link_name = (
+            data.get("type", {})
+                .get("name", "")
+                .strip()
+                .lower()
+        )
+
+        if link_name in SYSTEM_LINK_TYPES:
+            raise ValueError(
+                f"'{data['type']['name']}' is a Jira system hierarchy link "
+                f"and cannot be created using create_issue_link().\n\n"
+                "Resolution:\n"
+                "- Use 'Parent' field for parent-child relationships.\n"
+                "- Use 'Parent Link' field for Advanced Roadmaps hierarchy.\n"
+                "- Use 'Epic Link' field where applicable.\n"
+                "- Set these fields using create_issue() or issue_update().\n"
+                "- Do NOT use create_issue_link() for hierarchy creation."
+            )
+
         logger.info(f"Creating issue link with data: {data}")
+        
+        
         return self._jira.create_issue_link(data=data)
+    
+    def create_parent_relationship(
+        self,
+        child_issue_key: str,
+        parent_issue_key: str
+    ):
+        """
+        Create a Jira Parent relationship.
+
+        Use ONLY for Parent-child relationships.
+
+        note: only epic issue type can be the parent_issue_key. To establish the relationship between 
+        other issue types use create_issue_link() tool.
+
+        Args:
+            child_issue_key:
+                Child issue key.
+
+            parent_issue_key:
+                Parent issue key.
+
+        Returns:
+            Jira update response.
+        """
+
+        logger.info(
+            f"Setting Parent relationship: "
+            f"{child_issue_key} -> {parent_issue_key}"
+        )
+        
+
+        response = self._jira.issue_update(
+                issue_key=child_issue_key,
+                fields={
+                    "parent": {
+                        "key": parent_issue_key
+                    }
+                }
+            )
+        
+        return f"Created {parent_issue_key} parent of {child_issue_key}  successfully!"
+
+    
+    # def create_hierarchy_link(
+    #     self,
+    #     child_issue_key: str,
+    #     parent_issue_key: str
+    # ):
+    #     """
+    #     Use for Epic/Feature/Story hierarchy.
+    #     Uses Parent Link or Epic Link fields.
+    #     Never use create_issue_link for hierarchy creation.
+
+    #     Args:
+    #         child_issue_key:
+    #             Child issue key.
+
+    #         parent_issue_key:
+    #             Parent issue key.
+
+    #     Returns:
+    #         Jira update response.
+
+    #     Raises:
+    #         ValueError:
+    #             If neither Parent Link nor Epic Link
+    #             is present for the issue.
+    #     """
+
+    #     logger.info(
+    #         f"Creating hierarchy relationship: "
+    #         f"{child_issue_key} -> {parent_issue_key}"
+    #     )
+
+    #     edit_meta = self._jira.issue_editmeta(child_issue_key)
+
+    #     fields = edit_meta.get("fields", {})
+
+    #     #
+    #     # Parent Link
+    #     #
+    #     for field_id, field_info in fields.items():
+
+    #         field_name = (
+    #             field_info.get("name", "")
+    #             .strip()
+    #             .lower()
+    #         )
+
+    #         if field_name == "parent link":
+
+    #             logger.info(
+    #                 f"Using Parent Link field "
+    #                 f"{field_id}"
+    #             )
+
+    #             return self._jira.issue_update(
+    #                 issue_key=child_issue_key,
+    #                 fields={
+    #                     field_id: {
+    #                         "key": parent_issue_key
+    #                     }
+    #                 }
+    #             )
+
+    #     #
+    #     # Epic Link
+    #     #
+    #     for field_id, field_info in fields.items():
+
+    #         field_name = (
+    #             field_info.get("name", "")
+    #             .strip()
+    #             .lower()
+    #         )
+
+    #         if field_name == "epic link":
+
+    #             logger.info(
+    #                 f"Using Epic Link field "
+    #                 f"{field_id}"
+    #             )
+
+    #             return self._jira.issue_update(
+    #                 issue_key=child_issue_key,
+    #                 fields={
+    #                     field_id: parent_issue_key
+    #                 }
+    #             )
+
+    #     raise ValueError(
+    #         f"Could not locate Parent Link or Epic Link "
+    #         f"field for issue '{child_issue_key}'. "
+    #         f"Use issue_editmeta() to inspect available "
+    #         f"hierarchy fields."
+    #     )
     
     def issue_editmeta(self, key: str):
         """
@@ -85,11 +283,11 @@ class JiraLLMWrapper:
         meta = self._jira.issue_editmeta(key)
         if not meta or 'fields' not in meta:
             return meta
-        filtered_fields = {
-            k: v for k, v in meta['fields'].items()
-            if v.get('name') and v['name'].strip().lower() in self.jira_fields_set
-        }
-        return {'fields': filtered_fields}
+        # filtered_fields = {
+        #     k: v for k, v in meta['fields'].items()
+        #     if v.get('name') and v['name'].strip().lower() in self.jira_fields_set
+        # }
+        return {'fields': meta}
     
     def safe_json_loads(self,json_string):
         # Replace real newlines and tabs with escaped versions
@@ -171,7 +369,9 @@ class JiraLLMWrapper:
                 'summary': 'User login feature',
                 'issuetype': {'name': 'Story'},  # Use name, not id
                 'description': 'As a user, I want to log in...',
-                'priority': {'name': 'High'}
+                'priority': {'name': 'High'},
+                'parent': {'key':'SCRUM-12'},
+                ...
             }
         
         Args:
@@ -222,13 +422,13 @@ class JiraLLMWrapper:
         result = self._jira.issue_createmeta_fieldtypes(project, issue_type_id, start=start, limit=limit)
         if not result or 'fields' not in result or not isinstance(result['fields'], list):
             return result
-        filtered_fields = [
-            field for field in result['fields']
-            if field.get('name') and field['name'].strip().lower() in self.jira_fields_set
-        ]
+        # filtered_fields = [
+        #     field for field in result['fields']
+        #     if field.get('name') and field['name'].strip().lower() in self.jira_fields_set
+        # ]
         # Return the same structure but with filtered fields
         filtered_result = dict(result)
-        filtered_result['fields'] = filtered_fields
+        # filtered_result['fields'] = filtered_fields
         return filtered_result
     
     def get_issue(
@@ -544,6 +744,108 @@ class JiraLLMWrapper:
         """
         logger.info("Fetching current user information")
         return self._jira.myself()
+    
+    
+    def get_project_hierarchy(self, project_key: str) -> dict:
+        """
+        Get project hierarchy information.
+
+        Args:
+            project_key: Jira project key
+
+        Returns:
+            Hierarchy metadata extracted from the project's issue types.
+        """
+
+        project = self.get_project(project_key)
+
+        issue_types = {}
+        hierarchy_levels = {}
+
+        for issue_type in project.get("issueTypes", []):
+
+            level = issue_type.get("hierarchyLevel", 0)
+            name = issue_type["name"]
+
+            issue_types[name] = {
+                "id": issue_type.get("id"),
+                "level": level,
+                "subtask": issue_type.get("subtask", False),
+                "description": issue_type.get("description", "")
+            }
+
+            hierarchy_levels.setdefault(level, []).append(name)
+
+        return {
+            "project_key": project.get("key"),
+            "project_name": project.get("name"),
+            "project_type": project.get("projectTypeKey"),
+            "project_style": (
+                "team-managed"
+                if project.get("simplified", False)
+                else "company-managed"
+            ),
+            "hierarchy_levels": hierarchy_levels,
+            "issue_types": issue_types
+        }
+        
+    def get_project_relationship_rules(
+        self,
+        project_key: str
+    ) -> dict:
+        """
+        This rule gives details on the hierarchy/issue link relationships among the jira issue types.
+        Use it before you create any hierarchial or issue links relationships between any issues.
+
+        Useful for deciding whether to use:
+        - parent field
+        - create_issue_link
+        - reject relationship
+        """
+
+        hierarchy_data = self.get_project_hierarchy(project_key)
+
+        issue_types = hierarchy_data["issue_types"]
+
+        levels = {
+            issue_type: metadata["level"]
+            for issue_type, metadata in issue_types.items()
+        }
+
+        parent_child_relationships = {}
+        issue_link_relationships = {}
+
+        for parent_type, parent_level in levels.items():
+
+            children = []
+            peers = []
+
+            for other_type, other_level in levels.items():
+
+                if other_type == parent_type:
+                    continue
+
+                # Direct child level
+                if other_level == parent_level - 1:
+                    children.append(other_type)
+
+                # Same level
+                elif other_level == parent_level:
+                    peers.append(other_type)
+
+            if children:
+                parent_child_relationships[parent_type] = {
+                    "can_be_parent_of": sorted(children)
+                }
+
+            if peers:
+                issue_link_relationships[parent_type] = sorted(peers)
+
+        return {
+            "project_key": project_key,
+            "parent_child_relationships": parent_child_relationships,
+            "issue_link_relationships": issue_link_relationships
+        }
     
     def __getattr__(self, name: str):
         """
