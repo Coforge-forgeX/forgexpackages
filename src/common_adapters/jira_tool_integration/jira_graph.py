@@ -20,16 +20,6 @@ logging.basicConfig(
     format="%(asctime)s@ %(name)s@ %(levelname)s @%(message)s"
     )
 
-msgs = int(os.getenv("PO_CONTEXT_WINDOW_SIZE",7))
-tools = []
-
-llm = AzureChatOpenAI(
-            azure_endpoint = os.getenv("AZURE_OPENAI_LLM_MODEL_API_BASE"),
-            api_key = os.getenv("AZURE_OPENAI_LLM_MODEL_API_KEY"),
-            azure_deployment= os.getenv("AZURE_OPENAI_LLM_MODEL_LLM_MODEL"),
-            api_version = os.getenv("AZURE_OPENAI_LLM_MODEL_API_VERSION")
-        )
-
 class ReactGraphState(MessagesState):
     tools: list
     workspace_id: str
