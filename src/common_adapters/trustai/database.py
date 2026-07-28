@@ -60,7 +60,10 @@ class TrustAIDatabaseManager:
             self.SessionLocal = sessionmaker(
                 autocommit=False,
                 autoflush=False,
-                bind=self.engine
+                bind=self.engine,
+                # Avoid DetachedInstanceError for simple attribute access
+                # after leaving `with self.get_session()`.
+                expire_on_commit=False,
             )
             logger.info("Database engine initialized successfully")
         except Exception as e:
@@ -285,11 +288,21 @@ class TrustAIDatabaseManager:
             ProviderModel or None
         """
         with self.get_session() as session:
-            return session.query(ProviderModel).filter_by(
+            model = session.query(ProviderModel).filter_by(
                 provider_name=provider_name,
                 deployment_name=deployment_name,
                 is_active=True
             ).first()
+
+            if not model:
+                return None
+                
+            return {
+                "id": model.id,
+                "provider_name": model.provider_name,
+                "deployment_name": model.deployment_name,
+                "trustai_model_key": model.trustai_model_key
+            }
 
     def create_provider_model(
         self,
@@ -349,7 +362,11 @@ class TrustAIDatabaseManager:
                 is_active=True
             ).first()
 
-            return mapping.provider_model if mapping else None
+            # Relationship may be lazy-loaded; force load while session is open.
+            if not mapping:
+                return None
+            _ = mapping.provider_model  # noqa: F841
+            return mapping.provider_model
 
     def set_workspace_agent_default_model(
         self,
@@ -406,7 +423,10 @@ class TrustAIDatabaseManager:
                 f"Set default model for workspace={workspace_id}, "
                 f"agent={agent_id}, provider_model={provider_model_id}"
             )
-            return mapping
+            result = {"id": mapping.id,"is_default": mapping.is_default,"is_active": mapping.is_active}
+            return result
+
+    # todo: set_bulk_workspace_agent_default_model
 
     def get_user_agent_preference(
         self,
@@ -432,7 +452,11 @@ class TrustAIDatabaseManager:
                 agent_id=agent_id
             ).first()
 
-            return pref.provider_model if pref else None
+            # Relationship may be lazy-loaded; force load while session is open.
+            if not pref:
+                return None
+            _ = pref.provider_model  # noqa: F841
+            return pref.provider_model
 
     def set_user_agent_preference(
         self,

@@ -193,7 +193,7 @@ class TrustAIWorkspaceIntegration:
         """
         # Ensure default model exists (create from .env if needed)
         system_default = self.db.ensure_default_provider_model()
-
+        logger.info(f"system default {system_default}")
         if not agent_ids:
             logger.warning(
                 f"No agent_ids provided. "
@@ -205,7 +205,12 @@ class TrustAIWorkspaceIntegration:
             f"Initializing configs for {len(agent_ids)} agents in workspace {workspace_id} "
             f"using system default: {system_default['provider_name']}/{system_default['deployment_name']}"
         )
-
+        if not system_default:
+            logger.error(
+                        f"Initializing configs failed for  {len(agent_ids)} agents in workspace {workspace_id} "
+                        f"due to missing system default in provider model table"
+                    )
+            raise ValueError("System Default configuration not found in provider model")
         # Configure each agent
         success_count = 0
         for agent_id in agent_ids:
@@ -220,6 +225,8 @@ class TrustAIWorkspaceIntegration:
                 success_count += 1
                 logger.info(f"Configured agent {agent_id} with default model")
             except Exception as e:
+                import traceback
+                logger.error(f"Failed to configure agent {agent_id}\n{traceback.format_exc()}")
                 logger.error(f"Failed to configure agent {agent_id}: {e}")
 
         logger.info(
@@ -315,12 +322,15 @@ class TrustAIWorkspaceIntegration:
                 "Please add this model to the provider_models table first."
             )
 
-        # Extract attrs before obj becomes detached
-        provider_model_id = provider_model.id
-        model_provider_name = provider_model.provider_name
-        model_deployment_name = provider_model.deployment_name
-        model_trustai_key = provider_model.trustai_model_key
-
+        # # Extract attrs before obj becomes detached
+        # provider_model_id = provider_model.id
+        # model_provider_name = provider_model.provider_name
+        # model_deployment_name = provider_model.deployment_name
+        # model_trustai_key = provider_model.trustai_model_key
+        provider_model_id = provider_model["id"]
+        model_provider_name = provider_model["provider_name"]
+        model_deployment_name = provider_model["deployment_name"]
+        model_trustai_key = provider_model["trustai_model_key"]
         # Set as default for this workspace + agent
         mapping = self.db.set_workspace_agent_default_model(
             workspace_id=workspace_id,
@@ -330,7 +340,7 @@ class TrustAIWorkspaceIntegration:
         )
 
         # Extract mapping attrs immediately
-        is_default = mapping.is_default
+        is_default = mapping["is_default"]
 
         logger.info(
             f"Configured agent provider model: workspace={workspace_id}, "
@@ -375,11 +385,11 @@ class TrustAIWorkspaceIntegration:
                 "Please add this model to the provider_models table first."
             )
 
-        # Extract attrs before detached
-        provider_model_id = provider_model.id
-        model_provider_name = provider_model.provider_name
-        model_deployment_name = provider_model.deployment_name
-        model_trustai_key = provider_model.trustai_model_key
+        # Extract from dict
+        provider_model_id = provider_model["id"]
+        model_provider_name = provider_model["provider_name"]
+        model_deployment_name = provider_model["deployment_name"]
+        model_trustai_key = provider_model["trustai_model_key"]
 
         # Set user preference
         self.db.set_user_agent_preference(
