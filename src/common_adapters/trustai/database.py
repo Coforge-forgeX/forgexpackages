@@ -159,6 +159,7 @@ class TrustAIDatabaseManager:
         Returns:
             Saved TrustAIWorkspaceConfig instance
         """
+            # Check if config exists
         with self.get_session() as session:
             # Check if config exists
             config = session.query(TrustAIWorkspaceConfig).filter_by(
@@ -198,6 +199,75 @@ class TrustAIDatabaseManager:
                 is_system_default=True,
                 is_active=True
             ).first()
+
+    def ensure_default_provider_model(self) -> Dict[str, Any]:
+        """
+        Ensure system default provider model exists.
+        If not, create from environment variables.
+
+        Environment variables:
+            TRUSTAI_DEFAULT_PROVIDER_NAME: default 'azure'
+            TRUSTAI_DEFAULT_DEPLOYMENT_NAME: default 'gpt-4-1'
+            TRUSTAI_DEFAULT_MODEL_KEY: default 'gpt-4'
+
+        Returns:
+            Dict with id, provider_name, deployment_name, trustai_model_key
+        """
+        import os
+
+        # Check existing
+        with self.get_session() as session:
+            system_default = session.query(ProviderModel).filter_by(
+                is_system_default=True,
+                is_active=True
+            ).first()
+
+            if system_default:
+                # Access attrs in session
+                result = {
+                    'id': system_default.id,
+                    'provider_name': system_default.provider_name,
+                    'deployment_name': system_default.deployment_name,
+                    'trustai_model_key': system_default.trustai_model_key,
+                    'is_system_default': system_default.is_system_default
+                }
+                logger.info(
+                    f"System default exists: {result['provider_name']}/{result['deployment_name']}"
+                )
+                return result
+
+        # Create from env
+        provider_name = os.getenv('TRUSTAI_DEFAULT_PROVIDER_NAME', 'azure')
+        deployment_name = os.getenv('TRUSTAI_DEFAULT_DEPLOYMENT_NAME', 'gpt-4-1')
+        trustai_model_key = os.getenv('TRUSTAI_DEFAULT_MODEL_KEY', 'gpt-4')
+
+        logger.info(f"Creating system default: {provider_name}/{deployment_name}")
+
+        # create_provider_model already handles session
+        default_model = self.create_provider_model(
+            provider_name=provider_name,
+            deployment_name=deployment_name,
+            trustai_model_key=trustai_model_key,
+            is_system_default=True
+        )
+
+        # Access attrs in session (create_provider_model returns detached object too)
+        with self.get_session() as session:
+            # Re-query to get fresh object in this session
+            model = session.query(ProviderModel).filter_by(
+                id=default_model.id
+            ).first()
+
+            result = {
+                'id': model.id,
+                'provider_name': model.provider_name,
+                'deployment_name': model.deployment_name,
+                'trustai_model_key': model.trustai_model_key,
+                'is_system_default': model.is_system_default
+            }
+
+        logger.info(f"Created system default provider model (id={result['id']})")
+        return result
 
     def get_provider_model(
         self,

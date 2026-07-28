@@ -5,7 +5,7 @@ Handles workspace registration, API key generation, and configuration management
 """
 
 import logging
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 import httpx
 
 from .database import TrustAIDatabaseManager
@@ -39,8 +39,10 @@ class TrustAIWorkspaceIntegration:
     async def register_workspace(
         self,
         workspace_id: str,
-        trustai_config: Dict[str, Any]
-    ) -> Tuple[str, str]:
+        trustai_config: Dict[str, Any],
+        agent_ids: list = None,
+        user_id: int = None
+    ) -> Dict[str, Any]:
         """
         Register workspace with TrustAI and store configuration.
 
@@ -56,9 +58,15 @@ class TrustAIWorkspaceIntegration:
                 - application: App details (name, description, etc.)
                 - guardrails: List of guardrail types
                 - system_config: System configuration
+            agent_ids: List of agent IDs from response (optional)
+            user_id: User ID who registered workspace (optional)
 
         Returns:
-            Tuple of (app_id, api_key)
+            Dict containing:
+                - app_id: TrustAI application ID
+                - api_key: Generated API key
+                - agent_ids: List of agent IDs (if provided)
+                - user_id: User ID (if provided)
 
         Raises:
             httpx.HTTPError: If API calls fail
@@ -84,9 +92,18 @@ class TrustAIWorkspaceIntegration:
             logger.info(f"Workspace config saved to database for workspace_id={workspace_id}")
 
             # Step 4: Initialize default agent configurations
-            await self._initialize_default_agent_configs(workspace_id)
+            await self._initialize_default_agent_configs(
+                workspace_id=workspace_id,
+                agent_ids=agent_ids,
+                created_by=user_id
+            )
 
-            return app_id, api_key
+            return {
+                'app_id': app_id,
+                'api_key': api_key,
+                'agent_ids': agent_ids,
+                'user_id': user_id
+            }
 
         except Exception as e:
             logger.error(f"Failed to register workspace {workspace_id}: {e}")
@@ -157,26 +174,56 @@ class TrustAIWorkspaceIntegration:
 
             return str(api_key)
 
-    async def _initialize_default_agent_configs(self, workspace_id: str):
+    async def _initialize_default_agent_configs(
+        self,
+        workspace_id: str,
+        agent_ids: list = None,
+        created_by: int = None
+    ):
         """
         Initialize default agent configurations for the workspace.
 
-        Uses the system default provider model to set up initial configs.
+        Creates default provider model from .env if needed.
+        Configures each agent with system default model.
 
         Args:
-            workspace_id: UUID string of the workspace
+            workspace_id: UUID string of workspace
+            agent_ids: List of agent IDs to configure (if None, skip)
+            created_by: User ID who created configs
         """
-        system_default = self.db.get_system_default_provider_model()
-        if not system_default:
+        # Ensure default model exists (create from .env if needed)
+        system_default = self.db.ensure_default_provider_model()
+
+        if not agent_ids:
             logger.warning(
-                f"No system default provider model found. "
-                f"Skipping default agent config initialization for workspace {workspace_id}"
+                f"No agent_ids provided. "
+                f"Skipping agent config initialization for workspace {workspace_id}"
             )
             return
 
         logger.info(
-            f"Initialized default agent configs for workspace {workspace_id} "
-            f"using system default: {system_default.provider_name}/{system_default.deployment_name}"
+            f"Initializing configs for {len(agent_ids)} agents in workspace {workspace_id} "
+            f"using system default: {system_default['provider_name']}/{system_default['deployment_name']}"
+        )
+
+        # Configure each agent
+        success_count = 0
+        for agent_id in agent_ids:
+            try:
+                self.configure_agent_provider_model(
+                    workspace_id=workspace_id,
+                    agent_id=agent_id,
+                    provider_name=system_default['provider_name'],
+                    deployment_name=system_default['deployment_name'],
+                    created_by=created_by
+                )
+                success_count += 1
+                logger.info(f"Configured agent {agent_id} with default model")
+            except Exception as e:
+                logger.error(f"Failed to configure agent {agent_id}: {e}")
+
+        logger.info(
+            f"Initialized {success_count}/{len(agent_ids)} agent configs for workspace {workspace_id}"
         )
 
     async def list_api_keys(self, workspace_id: str) -> list:
@@ -193,9 +240,12 @@ class TrustAIWorkspaceIntegration:
         if not workspace_config:
             raise ValueError(f"No TrustAI config found for workspace {workspace_id}")
 
+        # Extract attr before detached
+        app_id = workspace_config.x_app_id
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
-                f"{self.endpoints.LIST_API_KEYS}?user_id={workspace_config.x_app_id}",
+                f"{self.endpoints.LIST_API_KEYS}?user_id={app_id}",
                 headers={
                     "accept": "application/json",
                     "X-API-KEY": self.master_api_key
@@ -218,15 +268,19 @@ class TrustAIWorkspaceIntegration:
         if not workspace_config:
             raise ValueError(f"No TrustAI config found for workspace {workspace_id}")
 
+        # Extract attrs before detached
+        app_id = workspace_config.x_app_id
+        api_endpoint = workspace_config.api_endpoint
+
         # Generate new API key
-        new_api_key = await self._generate_api_key(workspace_config.x_app_id)
+        new_api_key = await self._generate_api_key(app_id)
 
         # Update in database
         self.db.save_workspace_config(
             workspace_id=workspace_id,
-            x_app_id=workspace_config.x_app_id,
+            x_app_id=app_id,
             x_api_key=new_api_key,
-            api_endpoint=workspace_config.api_endpoint
+            api_endpoint=api_endpoint
         )
 
         logger.info(f"API key renewed for workspace {workspace_id}")
@@ -253,7 +307,7 @@ class TrustAIWorkspaceIntegration:
         Returns:
             Configuration details dict
         """
-        # Get or create provider model
+        # Get provider model and extract attrs immediately
         provider_model = self.db.get_provider_model(provider_name, deployment_name)
         if not provider_model:
             raise ValueError(
@@ -261,13 +315,22 @@ class TrustAIWorkspaceIntegration:
                 "Please add this model to the provider_models table first."
             )
 
+        # Extract attrs before obj becomes detached
+        provider_model_id = provider_model.id
+        model_provider_name = provider_model.provider_name
+        model_deployment_name = provider_model.deployment_name
+        model_trustai_key = provider_model.trustai_model_key
+
         # Set as default for this workspace + agent
         mapping = self.db.set_workspace_agent_default_model(
             workspace_id=workspace_id,
             agent_id=agent_id,
-            provider_model_id=provider_model.id,
+            provider_model_id=provider_model_id,
             created_by=created_by
         )
+
+        # Extract mapping attrs immediately
+        is_default = mapping.is_default
 
         logger.info(
             f"Configured agent provider model: workspace={workspace_id}, "
@@ -277,10 +340,10 @@ class TrustAIWorkspaceIntegration:
         return {
             'workspace_id': workspace_id,
             'agent_id': agent_id,
-            'provider_name': provider_model.provider_name,
-            'deployment_name': provider_model.deployment_name,
-            'trustai_model_key': provider_model.trustai_model_key,
-            'is_default': mapping.is_default
+            'provider_name': model_provider_name,
+            'deployment_name': model_deployment_name,
+            'trustai_model_key': model_trustai_key,
+            'is_default': is_default
         }
 
     def configure_user_specific_agent_provider_model(
@@ -304,7 +367,7 @@ class TrustAIWorkspaceIntegration:
         Returns:
             Configuration details dict
         """
-        # Get provider model
+        # Get provider model and extract attrs immediately
         provider_model = self.db.get_provider_model(provider_name, deployment_name)
         if not provider_model:
             raise ValueError(
@@ -312,12 +375,18 @@ class TrustAIWorkspaceIntegration:
                 "Please add this model to the provider_models table first."
             )
 
+        # Extract attrs before detached
+        provider_model_id = provider_model.id
+        model_provider_name = provider_model.provider_name
+        model_deployment_name = provider_model.deployment_name
+        model_trustai_key = provider_model.trustai_model_key
+
         # Set user preference
         self.db.set_user_agent_preference(
             workspace_id=workspace_id,
             user_id=user_id,
             agent_id=agent_id,
-            provider_model_id=provider_model.id
+            provider_model_id=provider_model_id
         )
 
         logger.info(
@@ -329,9 +398,9 @@ class TrustAIWorkspaceIntegration:
             'workspace_id': workspace_id,
             'user_id': user_id,
             'agent_id': agent_id,
-            'provider_name': provider_model.provider_name,
-            'deployment_name': provider_model.deployment_name,
-            'trustai_model_key': provider_model.trustai_model_key
+            'provider_name': model_provider_name,
+            'deployment_name': model_deployment_name,
+            'trustai_model_key': model_trustai_key
         }
 
     def fetch_workspace_agent_provider_model(
@@ -365,6 +434,7 @@ class TrustAIWorkspaceIntegration:
         if not provider_model:
             return None
 
+        # Extract attrs immediately before detached
         return {
             'provider_name': provider_model.provider_name,
             'deployment_name': provider_model.deployment_name,
@@ -433,13 +503,18 @@ class TrustAIWorkspaceIntegration:
         Raises:
             ValueError: If workspace config or provider model not found
         """
-        # Fetch workspace configuration
+        # Fetch workspace configuration and extract attrs
         workspace_config = self.db.get_workspace_config(workspace_id)
         if not workspace_config:
             raise ValueError(
                 f"No TrustAI configuration found for workspace {workspace_id}. "
                 "Please register the workspace first."
             )
+
+        # Extract workspace config attrs before detached
+        ws_app_id = workspace_config.x_app_id
+        ws_api_key = workspace_config.x_api_key
+        ws_endpoint = workspace_config.api_endpoint
 
         # Resolve provider model (3-tier hierarchy)
         provider_model = self.db.resolve_provider_model(
@@ -454,24 +529,30 @@ class TrustAIWorkspaceIntegration:
                 "Please configure a provider model first."
             )
 
+        # Extract provider model attrs before detached
+        pm_provider_name = provider_model.provider_name
+        pm_deployment_name = provider_model.deployment_name
+        pm_trustai_key = provider_model.trustai_model_key
+        pm_is_default = provider_model.is_system_default
+
         logger.info(
             f"Fetched provider configuration | workspace={workspace_id} | "
             f"agent={agent_id} | user={user_id} | "
-            f"provider={provider_model.provider_name} | "
-            f"model={provider_model.deployment_name}"
+            f"provider={pm_provider_name} | "
+            f"model={pm_deployment_name}"
         )
 
         return {
             'workspace_config': {
-                'x_app_id': workspace_config.x_app_id,
-                'x_api_key': workspace_config.x_api_key,
-                'api_endpoint': workspace_config.api_endpoint
+                'x_app_id': ws_app_id,
+                'x_api_key': ws_api_key,
+                'api_endpoint': ws_endpoint
             },
             'provider_model': {
-                'provider_name': provider_model.provider_name,
-                'deployment_name': provider_model.deployment_name,
-                'trustai_model_key': provider_model.trustai_model_key,
-                'is_system_default': provider_model.is_system_default
+                'provider_name': pm_provider_name,
+                'deployment_name': pm_deployment_name,
+                'trustai_model_key': pm_trustai_key,
+                'is_system_default': pm_is_default
             },
             'workspace_id': workspace_id,
             'agent_id': agent_id,
