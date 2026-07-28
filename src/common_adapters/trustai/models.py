@@ -26,7 +26,7 @@ class TrustAIWorkspaceConfig(Base):
     __tablename__ = 'trustai_workspace_config'
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    workspace_id = Column(UUID(as_uuid=False), nullable=False, unique=True)
+    workspace_id = Column(BigInteger, nullable=False)
     x_app_id = Column(String(255), nullable=False)
     x_api_key = Column(Text, nullable=False)
     api_endpoint = Column(Text, nullable=False)
@@ -72,7 +72,7 @@ class WorkspaceAgentProviderModelMapping(Base):
     __tablename__ = 'workspace_agent_provider_model_mapping'
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    workspace_id = Column(UUID(as_uuid=False), nullable=False)
+    workspace_id = Column(BigInteger, nullable=False)
     agent_id = Column(BigInteger, nullable=False)
     provider_model_id = Column(
         BigInteger,
@@ -112,7 +112,7 @@ class UserAgentProviderModelPreference(Base):
     __tablename__ = 'user_agent_provider_model_preference'
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    workspace_id = Column(UUID(as_uuid=False), nullable=False)
+    workspace_id = Column(BigInteger, nullable=False)
     user_id = Column(BigInteger, nullable=False)
     agent_id = Column(BigInteger, nullable=False)
     provider_model_id = Column(
