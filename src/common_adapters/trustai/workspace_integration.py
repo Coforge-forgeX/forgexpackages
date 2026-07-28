@@ -53,7 +53,7 @@ class TrustAIWorkspaceIntegration:
         4. Initializes default agent configurations
 
         Args:
-            workspace_id: UUID string of the workspace
+            workspace_id: Int string of the workspace
             trustai_config: TrustAI configuration dict containing:
                 - application: App details (name, description, etc.)
                 - guardrails: List of guardrail types
@@ -75,6 +75,11 @@ class TrustAIWorkspaceIntegration:
         try:
             # Step 1: Register app with TrustAI
             logger.info(f"Registering workspace {workspace_id} with TrustAI")
+            
+            # check if name is string(must be string to avoid 422)
+            if not isinstance(trustai_config['application']['name'],str):
+                trustai_config['application']['name'] = str(trustai_config['application']['name'])
+                
             app_id = await self._register_app(trustai_config)
             logger.info(f"App registered successfully. app_id={app_id}")
 
