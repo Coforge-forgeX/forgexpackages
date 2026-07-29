@@ -276,7 +276,7 @@ class TrustAILLMHelper:
             f"[TRUSTAI-HELPER] get_router_llm | workspace={workspace_id} | "
             f"agent={agent_id} | user={user_id}"
         )
-
+        
         # Fetch provider configuration from database
         config = self.integration.get_provider_configuration(
             workspace_id=workspace_id,

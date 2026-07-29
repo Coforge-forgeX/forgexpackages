@@ -138,6 +138,7 @@ class TrustAIDatabaseManager:
         Returns:
             TrustAIWorkspaceConfig or None if not found
         """
+        workspace_id = int(workspace_id)
         with self.get_session() as session:
             return session.query(TrustAIWorkspaceConfig).filter_by(
                 workspace_id=workspace_id
@@ -162,6 +163,8 @@ class TrustAIDatabaseManager:
         Returns:
             Saved TrustAIWorkspaceConfig instance
         """
+        workspace_id = int(workspace_id)
+        
             # Check if config exists
         with self.get_session() as session:
             # Check if config exists
@@ -354,6 +357,7 @@ class TrustAIDatabaseManager:
         Returns:
             Default ProviderModel or None
         """
+        workspace_id = int(workspace_id)
         with self.get_session() as session:
             mapping = session.query(WorkspaceAgentProviderModelMapping).filter_by(
                 workspace_id=workspace_id,
@@ -387,6 +391,7 @@ class TrustAIDatabaseManager:
         Returns:
             Created or updated mapping
         """
+        workspace_id = int(workspace_id)
         with self.get_session() as session:
             # Clear existing defaults for this workspace + agent
             session.query(WorkspaceAgentProviderModelMapping).filter_by(
@@ -445,6 +450,7 @@ class TrustAIDatabaseManager:
         Returns:
             User's preferred ProviderModel or None
         """
+        workspace_id = int(workspace_id)
         with self.get_session() as session:
             pref = session.query(UserAgentProviderModelPreference).filter_by(
                 workspace_id=workspace_id,
@@ -477,6 +483,7 @@ class TrustAIDatabaseManager:
         Returns:
             Created or updated preference
         """
+        workspace_id = int(workspace_id)
         with self.get_session() as session:
             pref = session.query(UserAgentProviderModelPreference).filter_by(
                 workspace_id=workspace_id,
@@ -523,6 +530,7 @@ class TrustAIDatabaseManager:
         Returns:
             Resolved ProviderModel or None
         """
+        workspace_id = int(workspace_id)
         # 1. Check user preference
         if user_id:
             user_model = self.get_user_agent_preference(workspace_id, user_id, agent_id)
@@ -563,6 +571,7 @@ class TrustAIDatabaseManager:
         Returns:
             List of dicts with provider model information
         """
+        workspace_id = int(workspace_id)
         with self.get_session() as session:
             mappings = session.query(WorkspaceAgentProviderModelMapping).filter_by(
                 workspace_id=workspace_id,
