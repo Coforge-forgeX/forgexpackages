@@ -66,12 +66,12 @@ class TrustAIChatModel(BaseChatModel):
 
     agent_id: int
     """Agent ID."""
+    
+    user_email: str = None
+    """User email."""
 
     user_id: Optional[int] = None
     """User ID (optional)."""
-
-    user_email: Optional[str] = None
-    """User email (optional)."""
 
     temperature: Optional[float] = 0.7
     """Sampling temperature."""
@@ -98,7 +98,7 @@ class TrustAIChatModel(BaseChatModel):
     def __init__(
         self,
         config: Dict[str, Any],
-        user_email: Optional[str] = None,
+        user_email: str, 
         temperature: Optional[float] = 0.7,
         max_tokens: Optional[int] = 1000,
         top_p: Optional[float] = 0.9,
@@ -110,7 +110,7 @@ class TrustAIChatModel(BaseChatModel):
 
         Args:
             config: Configuration dict from get_provider_configuration()
-            user_email: User email (optional, overrides config user_id)
+            user_email: User email
             temperature: Sampling temperature
             max_tokens: Maximum tokens to generate
             top_p: Nucleus sampling parameter

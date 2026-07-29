@@ -34,8 +34,8 @@ class TrustAIProvider:
         deployment_name: str,
         workspace_id: str,
         agent_id: int,
+        user_email: str,
         user_id: Optional[int] = None,
-        user_email: Optional[str] = None
     ):
         """
         Initialize TrustAI provider with credentials.
@@ -78,7 +78,7 @@ class TrustAIProvider:
     def from_configuration(
         cls,
         config: Dict[str, Any],
-        user_email: Optional[str] = None
+        user_email: str 
     ) -> "TrustAIProvider":
         """
         Create provider from configuration dict.
@@ -116,8 +116,8 @@ class TrustAIProvider:
             deployment_name=provider_model['deployment_name'],
             workspace_id=config['workspace_id'],
             agent_id=config['agent_id'],
+            user_email=user_email,
             user_id=config.get('user_id'),
-            user_email=user_email
         )
 
     def _build_headers(self) -> Dict[str, str]:
@@ -242,6 +242,7 @@ class TrustAIProvider:
             "top_p": top_p
         }
 
+        logger.info(f"Request Paylod:\n{payload}\n\nRequest Headers:\n{headers}")
         # Add any additional kwargs (for tool calling, etc.)
         payload.update(kwargs)
 

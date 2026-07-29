@@ -89,9 +89,9 @@ class TrustAILLMHelper:
         self,
         workspace_id: str,
         agent_id: AgentId,
+        user_email: str,
         prompt: str,
-        user_id: Optional[int] = None,
-        user_email: Optional[str] = None,
+        user_id: Optional[int] = None, 
         temperature: float = 0.7,
         max_tokens: int = 1000,
         **kwargs
@@ -103,7 +103,7 @@ class TrustAILLMHelper:
             workspace_id: Workspace UUID string
             agent_id: Agent ID (int or str)
             prompt: The prompt to send to the LLM
-            user_id: User ID (optional)
+            user_id: User ID (optional) # pass when you want 3 level-hierarchy user->workspace->system for provider model
             user_email: User email (optional)
             temperature: Sampling temperature
             max_tokens: Maximum tokens to generate
@@ -164,11 +164,11 @@ class TrustAILLMHelper:
         self,
         workspace_id: str,
         agent_id: AgentId,
+        user_email: str,
         sys_prompt: str,
         user_input: str,
         history: Optional[List[Dict[str, str]]] = None,
         user_id: Optional[int] = None,
-        user_email: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 1000,
         **kwargs
@@ -250,8 +250,8 @@ class TrustAILLMHelper:
         self,
         workspace_id: str,
         agent_id: AgentId,
+        user_email: str,
         user_id: Optional[int] = None,
-        user_email: Optional[str] = None,
         **kwargs
     ) -> TrustAIChatModel:
         """
@@ -295,8 +295,8 @@ class TrustAILLMHelper:
         self,
         workspace_id: str,
         agent_id: AgentId,
+        user_email: str,
         user_id: Optional[int] = None,
-        user_email: Optional[str] = None
     ) -> TrustAIProvider:
         """
         Get TrustAI provider instance.
