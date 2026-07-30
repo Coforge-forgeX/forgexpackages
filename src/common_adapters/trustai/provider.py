@@ -243,7 +243,7 @@ class TrustAIProvider:
             "top_p": top_p
         }
 
-        logger.info(f"Request Paylod:\n{payload}\n\nRequest Headers:\n{headers}")
+        # logger.info(f"Request Paylod:\n{payload}\n\nRequest Headers:\n{headers}")
         # Add any additional kwargs (for tool calling, etc.)
         payload.update(kwargs)
 
