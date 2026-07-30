@@ -9,7 +9,8 @@ from typing import Dict, Any, Optional
 import httpx
 
 from .database import TrustAIDatabaseManager
-from .endpoints import TrustAIEndpoints, TrustAIEnvVars
+from .endpoints import TrustAIEndpoints
+from .config import TrustAIEnvVars
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,14 @@ class TrustAIWorkspaceIntegration:
         """
         self.db = db_manager
         self.endpoints = TrustAIEndpoints
-        self.master_api_key = TrustAIEnvVars.get_master_api_key()
+        
+    @property
+    def turstai_master_key():
+        """
+        Get trustai master key.
+        """
+        
+        return TrustAIEnvVars.get_master_api_key()
 
     async def register_workspace(
         self,
@@ -130,7 +138,7 @@ class TrustAIWorkspaceIntegration:
                 headers={
                     "accept": "application/json",
                     "Content-Type": "application/json",
-                    "X-Api-Key": self.master_api_key
+                    "X-Api-Key": self.turstai_master_key
                 },
                 json=trustai_config
             )
@@ -161,7 +169,7 @@ class TrustAIWorkspaceIntegration:
                 self.endpoints.GENERATE_API_KEY,
                 headers={
                     "accept": "application/json",
-                    "X-API-KEY": self.master_api_key,
+                    "X-API-KEY": self.trustai_master_key,
                     "Content-Type": "application/json"
                 },
                 json={
@@ -260,7 +268,7 @@ class TrustAIWorkspaceIntegration:
                 f"{self.endpoints.LIST_API_KEYS}?user_id={app_id}",
                 headers={
                     "accept": "application/json",
-                    "X-API-KEY": self.master_api_key
+                    "X-API-KEY": self.trustai_master_key
                 }
             )
             response.raise_for_status()

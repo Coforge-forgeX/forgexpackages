@@ -130,3 +130,5 @@ Thumbs.db
 *.temp
 *.bak
 *.orig
+
+*.ipynb

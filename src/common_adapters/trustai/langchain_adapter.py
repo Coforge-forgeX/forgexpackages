@@ -23,6 +23,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.callbacks import CallbackManagerForLLMRun, AsyncCallbackManagerForLLMRun
 
 from .provider import TrustAIProvider
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +207,7 @@ class TrustAIChatModel(BaseChatModel):
             self._agenerate(messages, stop, run_manager, **kwargs)
         )
 
+
     async def _agenerate(
         self,
         messages: List[BaseMessage],
@@ -215,64 +217,72 @@ class TrustAIChatModel(BaseChatModel):
     ) -> ChatResult:
         """
         Generate chat completion (asynchronous).
-
-        Args:
-            messages: List of LangChain messages
-            stop: Stop sequences
-            run_manager: Callback manager
-            **kwargs: Additional parameters
-
-        Returns:
-            ChatResult with generated message
         """
         provider = self._get_provider()
         message_dicts = self._convert_messages_to_dicts(messages)
 
-        # Merge model parameters
         params = {
-            'temperature': self.temperature,
-            'max_tokens': self.max_tokens,
-            'top_p': self.top_p,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "top_p": self.top_p,
             **self.model_kwargs,
-            **kwargs
+            **kwargs,
         }
 
-        # Check if tools are provided
-        tools = params.pop('tools', None)
-        tool_choice = params.pop('tool_choice', 'auto')
+        tools = params.pop("tools", None)
+        tool_choice = params.pop("tool_choice", "auto")
 
         try:
             if tools:
-                # Tool calling mode
                 response_data = await provider.chat_completion_with_tools(
                     messages=message_dicts,
                     tools=tools,
                     tool_choice=tool_choice,
-                    **params
+                    **params,
                 )
 
-                # Parse response
-                choice = response_data['choices'][0]
-                message_data = choice['message']
-                content = message_data.get('content', '')
-                tool_calls = message_data.get('tool_calls', [])
+                choice = response_data["choices"][0]
+                message_data = choice["message"]
 
-                # Create AIMessage with tool calls
+                content = message_data.get("content", "") or ""
+
+                # Raw OpenAI/TrustAI tool calls
+                raw_tool_calls = message_data.get("tool_calls", [])
+
+                # Convert to LangChain format
+                langchain_tool_calls = []
+
+                for tc in raw_tool_calls:
+                    try:
+                        langchain_tool_calls.append(
+                            {
+                                "name": tc["function"]["name"],
+                                "args": json.loads(
+                                    tc["function"].get("arguments", "{}")
+                                ),
+                                "id": tc["id"],
+                                "type": "tool_call",
+                            }
+                        )
+                    except Exception as ex:
+                        logger.warning(
+                            f"Failed to parse tool call: {tc}. Error: {ex}"
+                        )
+
                 ai_message = AIMessage(
                     content=content,
-                    additional_kwargs={'tool_calls': tool_calls} if tool_calls else {}
+                    tool_calls=langchain_tool_calls,
+                    additional_kwargs={
+                        "tool_calls": raw_tool_calls
+                    } if raw_tool_calls else {},
                 )
-
-                # Set tool_calls attribute if present
-                if tool_calls:
-                    ai_message.tool_calls = tool_calls
 
             else:
-                # Regular completion mode
                 content = await provider.chat_completion(
                     messages=message_dicts,
-                    **params
+                    **params,
                 )
+
                 ai_message = AIMessage(content=content)
 
             generation = ChatGeneration(message=ai_message)
@@ -281,6 +291,7 @@ class TrustAIChatModel(BaseChatModel):
         except Exception as e:
             logger.error(f"Error in TrustAI chat completion: {e}")
             raise
+            
 
     def bind_tools(
         self,
@@ -329,10 +340,10 @@ class TrustAIChatModel(BaseChatModel):
         Returns:
             Model that outputs structured data
         """
-        from langchain_core.utils.function_calling import convert_to_openai_function
+        from langchain_core.utils.function_calling import convert_to_openai_function , _convert_pydantic_to_openai_function
 
         # Convert schema to function
-        function = convert_to_openai_function(schema)
+        function = _convert_pydantic_to_openai_function(schema)
 
         # Bind the function as a tool
         return self.bind_tools(

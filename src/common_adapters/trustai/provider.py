@@ -7,6 +7,7 @@ Handles LLM calls to TrustAI /chat/completions endpoint.
 import logging
 from typing import Dict, Any, Optional, List
 import httpx
+import json
 
 from .endpoints import TrustAIEndpoints
 
@@ -302,20 +303,7 @@ class TrustAIProvider:
         max_tokens: int = 1000,
         **kwargs
     ) -> Dict[str, Any]:
-        """
-        Call TrustAI /chat/completions with tool calling support.
 
-        Args:
-            messages: List of message dicts
-            tools: List of tool definitions
-            tool_choice: Tool choice strategy ("auto", "none", or specific tool)
-            temperature: Sampling temperature
-            max_tokens: Maximum tokens to generate
-            **kwargs: Additional parameters
-
-        Returns:
-            Full response dict including tool calls if any
-        """
         headers = self._build_headers()
 
         payload = {
@@ -326,13 +314,10 @@ class TrustAIProvider:
             "tools": tools,
             "tool_choice": tool_choice
         }
-        payload.update(kwargs)
 
-        logger.debug(
-            f"[TRUSTAI-PROVIDER] Calling chat/completions with tools | "
-            f"model={self.trustai_model_key} | "
-            f"messages={len(messages)} | tools={len(tools)}"
-        )
+        payload.update(kwargs)
+        import json
+        # print(f"payload for langchain_generate_response_with_tools: \n{json.dumps(payload, indent=2)}")
 
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
@@ -341,23 +326,46 @@ class TrustAIProvider:
                     headers=headers,
                     json=payload
                 )
+
                 response.raise_for_status()
                 data = response.json()
+                
+                # print(f"response from with tool chat completions/n{json.dumps(data, indent=2)}")
 
-                logger.debug(
-                    f"[TRUSTAI-PROVIDER] Tool response received | "
-                    f"choices={len(data.get('choices', []))}"
-                )
+                # Convert OpenAI tool calls -> LangChain tool calls
+                choices = data.get("choices", [])
+
+                for choice in choices:
+                    message = choice.get("message", {})
+                    raw_tool_calls = message.get("tool_calls", [])
+
+                    transformed_tool_calls = []
+
+                    for tc in raw_tool_calls:
+                        try:
+                            transformed_tool_calls.append(
+                                {
+                                    "name": tc["function"]["name"],
+                                    "args": json.loads(
+                                        tc["function"]["arguments"]
+                                    ),
+                                    "id": tc["id"],
+                                    "type": "tool_call",
+                                }
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Failed to parse tool call arguments"
+                            )
+
+                    message["langchain_tool_calls"] = transformed_tool_calls
 
                 return data
 
         except httpx.HTTPError as e:
             logger.error(f"[TRUSTAI-PROVIDER] Tool call failed: {e}")
-            if hasattr(e, 'response') and e.response is not None:
+            if hasattr(e, "response") and e.response is not None:
                 logger.error(f"Response: {e.response.text}")
-            raise
-        except Exception as e:
-            logger.error(f"[TRUSTAI-PROVIDER] Unexpected error in tool call: {e}")
             raise
 
     def get_current_model_info(self) -> Dict[str, str]:
