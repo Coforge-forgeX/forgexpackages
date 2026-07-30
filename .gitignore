@@ -130,4 +130,6 @@ Thumbs.db
 *.temp
 *.bak
 *.orig
-is showing to be tracked in 
+
+
+*.ipynb
