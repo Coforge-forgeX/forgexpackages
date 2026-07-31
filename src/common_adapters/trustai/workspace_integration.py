@@ -37,7 +37,7 @@ class TrustAIWorkspaceIntegration:
         self.endpoints = TrustAIEndpoints
         
     @property
-    def turstai_master_key():
+    def trustai_master_key(self):
         """
         Get trustai master key.
         """
@@ -138,7 +138,7 @@ class TrustAIWorkspaceIntegration:
                 headers={
                     "accept": "application/json",
                     "Content-Type": "application/json",
-                    "X-Api-Key": self.turstai_master_key
+                    "X-Api-Key": self.trustai_master_key
                 },
                 json=trustai_config
             )
