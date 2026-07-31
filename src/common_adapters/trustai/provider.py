@@ -317,7 +317,7 @@ class TrustAIProvider:
 
         payload.update(kwargs)
         import json
-        print(f"payload for langchain_generate_response_with_tools: \n{json.dumps(payload, indent=2)}")
+        # print(f"payload for langchain_generate_response_with_tools: \n{json.dumps(payload, indent=2)}")
 
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
