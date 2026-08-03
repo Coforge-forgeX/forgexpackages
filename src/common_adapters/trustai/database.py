@@ -589,6 +589,85 @@ class TrustAIDatabaseManager:
                 for m in mappings
             ]
 
+    def get_workspace_agent_ids(self, workspace_id: str) -> List[int]:
+        """
+        Get all agent IDs configured for a workspace.
+
+        Args:
+            workspace_id: UUID string of the workspace
+
+        Returns:
+            List of agent IDs that have active mappings in this workspace
+        """
+        workspace_id = int(workspace_id)
+        with self.get_session() as session:
+            mappings = session.query(WorkspaceAgentProviderModelMapping.agent_id).filter_by(
+                workspace_id=workspace_id,
+                is_active=True
+            ).distinct().all()
+
+            return [m.agent_id for m in mappings]
+
+    def deactivate_workspace_agent_mapping(
+        self,
+        workspace_id: str,
+        agent_id: int
+    ) -> int:
+        """
+        Deactivate all provider model mappings for a workspace + agent.
+
+        This soft-deletes the agent configuration by setting is_active=False.
+
+        Args:
+            workspace_id: UUID string of the workspace
+            agent_id: Agent ID to deactivate
+
+        Returns:
+            Number of mappings deactivated
+        """
+        workspace_id = int(workspace_id)
+        with self.get_session() as session:
+            count = session.query(WorkspaceAgentProviderModelMapping).filter_by(
+                workspace_id=workspace_id,
+                agent_id=agent_id,
+                is_active=True
+            ).update({'is_active': False})
+
+            logger.info(
+                f"Deactivated {count} mappings for workspace={workspace_id}, agent={agent_id}"
+            )
+            return count
+
+    def remove_user_agent_preferences(
+        self,
+        workspace_id: str,
+        agent_id: int
+    ) -> int:
+        """
+        Remove all user preferences for a workspace + agent combination.
+
+        This hard-deletes user-specific preferences when an agent is removed
+        from a workspace.
+
+        Args:
+            workspace_id: UUID string of the workspace
+            agent_id: Agent ID
+
+        Returns:
+            Number of preferences removed
+        """
+        workspace_id = int(workspace_id)
+        with self.get_session() as session:
+            count = session.query(UserAgentProviderModelPreference).filter_by(
+                workspace_id=workspace_id,
+                agent_id=agent_id
+            ).delete()
+
+            logger.info(
+                f"Removed {count} user preferences for workspace={workspace_id}, agent={agent_id}"
+            )
+            return count
+
     def close(self):
         """Close database engine and cleanup resources."""
         if self.engine:

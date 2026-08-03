@@ -581,3 +581,231 @@ class TrustAIWorkspaceIntegration:
             'agent_id': agent_id,
             'user_id': user_id
         }
+
+    async def add_agents_to_workspace(
+        self,
+        workspace_id: str,
+        agent_ids: list,
+        created_by: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Add new agents to an existing workspace.
+
+        Configures each new agent with the system default provider model.
+
+        Args:
+            workspace_id: UUID string of the workspace
+            agent_ids: List of agent IDs to add
+            created_by: User ID who is adding the agents
+
+        Returns:
+            Dict containing:
+                - workspace_id: Workspace ID
+                - added_agents: List of successfully added agent IDs
+                - failed_agents: List of agent IDs that failed with error messages
+
+        Raises:
+            ValueError: If workspace is not registered
+        """
+        # Verify workspace exists
+        workspace_config = self.db.get_workspace_config(workspace_id)
+        if not workspace_config:
+            raise ValueError(
+                f"No TrustAI configuration found for workspace {workspace_id}. "
+                "Please register the workspace first."
+            )
+
+        logger.info(f"Adding {len(agent_ids)} agents to workspace {workspace_id}")
+
+        # Initialize agents with default configuration
+        await self._initialize_default_agent_configs(
+            workspace_id=workspace_id,
+            agent_ids=agent_ids,
+            created_by=created_by
+        )
+
+        # Get system default for reporting
+        system_default = self.db.ensure_default_provider_model()
+
+        # Track results
+        added_agents = []
+        failed_agents = []
+
+        for agent_id in agent_ids:
+            try:
+                # Verify agent was configured
+                config = self.db.get_workspace_agent_default_model(workspace_id, agent_id)
+                if config:
+                    added_agents.append(agent_id)
+                    logger.info(f"Successfully added agent {agent_id} to workspace {workspace_id}")
+                else:
+                    failed_agents.append({
+                        'agent_id': agent_id,
+                        'error': 'Configuration not found after initialization'
+                    })
+            except Exception as e:
+                failed_agents.append({
+                    'agent_id': agent_id,
+                    'error': str(e)
+                })
+                logger.error(f"Failed to verify agent {agent_id}: {e}")
+
+        result = {
+            'workspace_id': workspace_id,
+            'added_agents': added_agents,
+            'failed_agents': failed_agents,
+            'default_model': f"{system_default['provider_name']}/{system_default['deployment_name']}"
+        }
+
+        logger.info(
+            f"Agent addition complete: {len(added_agents)} succeeded, "
+            f"{len(failed_agents)} failed for workspace {workspace_id}"
+        )
+
+        return result
+
+    def remove_agents_from_workspace(
+        self,
+        workspace_id: str,
+        agent_ids: list
+    ) -> Dict[str, Any]:
+        """
+        Remove agents from a workspace.
+
+        This will:
+        1. Deactivate workspace-agent default model mappings
+        2. Remove user-specific preferences for these agents
+
+        Args:
+            workspace_id: UUID string of the workspace
+            agent_ids: List of agent IDs to remove
+
+        Returns:
+            Dict containing:
+                - workspace_id: Workspace ID
+                - removed_agents: List of successfully removed agent IDs
+                - failed_agents: List of agent IDs that failed with error messages
+        """
+        logger.info(f"Removing {len(agent_ids)} agents from workspace {workspace_id}")
+
+        removed_agents = []
+        failed_agents = []
+
+        for agent_id in agent_ids:
+            try:
+                # Deactivate workspace-agent mapping
+                self.db.deactivate_workspace_agent_mapping(workspace_id, agent_id)
+
+                # Remove user preferences for this agent
+                self.db.remove_user_agent_preferences(workspace_id, agent_id)
+
+                removed_agents.append(agent_id)
+                logger.info(f"Successfully removed agent {agent_id} from workspace {workspace_id}")
+
+            except Exception as e:
+                failed_agents.append({
+                    'agent_id': agent_id,
+                    'error': str(e)
+                })
+                logger.error(f"Failed to remove agent {agent_id}: {e}")
+
+        result = {
+            'workspace_id': workspace_id,
+            'removed_agents': removed_agents,
+            'failed_agents': failed_agents
+        }
+
+        logger.info(
+            f"Agent removal complete: {len(removed_agents)} succeeded, "
+            f"{len(failed_agents)} failed for workspace {workspace_id}"
+        )
+
+        return result
+
+    async def update_workspace_agents(
+        self,
+        workspace_id: str,
+        current_agent_ids: list,
+        created_by: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Sync workspace agents with the current list.
+
+        Detects and handles:
+        - New agents (not in workspace) -> add them
+        - Deleted agents (in workspace but not in current list) -> remove them
+
+        Args:
+            workspace_id: UUID string of the workspace
+            current_agent_ids: Current list of agent IDs that should exist
+            created_by: User ID performing the update
+
+        Returns:
+            Dict containing:
+                - workspace_id: Workspace ID
+                - agents_added: List of newly added agent IDs
+                - agents_removed: List of removed agent IDs
+                - agents_unchanged: List of agent IDs that already existed
+                - failed_operations: List of failed operations with errors
+        """
+        logger.info(f"Syncing agents for workspace {workspace_id}")
+
+        # Get existing agents in workspace
+        existing_agents = self.db.get_workspace_agent_ids(workspace_id)
+
+        # Calculate differences
+        current_set = set(current_agent_ids)
+        existing_set = set(existing_agents)
+
+        agents_to_add = list(current_set - existing_set)
+        agents_to_remove = list(existing_set - current_set)
+        agents_unchanged = list(current_set & existing_set)
+
+        logger.info(
+            f"Workspace {workspace_id} sync: "
+            f"{len(agents_to_add)} to add, "
+            f"{len(agents_to_remove)} to remove, "
+            f"{len(agents_unchanged)} unchanged"
+        )
+
+        result = {
+            'workspace_id': workspace_id,
+            'agents_added': [],
+            'agents_removed': [],
+            'agents_unchanged': agents_unchanged,
+            'failed_operations': []
+        }
+
+        # Add new agents
+        if agents_to_add:
+            add_result = await self.add_agents_to_workspace(
+                workspace_id=workspace_id,
+                agent_ids=agents_to_add,
+                created_by=created_by
+            )
+            result['agents_added'] = add_result['added_agents']
+            result['failed_operations'].extend([
+                {'operation': 'add', **failed}
+                for failed in add_result['failed_agents']
+            ])
+
+        # Remove deleted agents
+        if agents_to_remove:
+            remove_result = self.remove_agents_from_workspace(
+                workspace_id=workspace_id,
+                agent_ids=agents_to_remove
+            )
+            result['agents_removed'] = remove_result['removed_agents']
+            result['failed_operations'].extend([
+                {'operation': 'remove', **failed}
+                for failed in remove_result['failed_agents']
+            ])
+
+        logger.info(
+            f"Workspace {workspace_id} sync complete: "
+            f"{len(result['agents_added'])} added, "
+            f"{len(result['agents_removed'])} removed, "
+            f"{len(result['failed_operations'])} failed"
+        )
+
+        return result
