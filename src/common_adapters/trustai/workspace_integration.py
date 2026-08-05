@@ -262,13 +262,14 @@ class TrustAIWorkspaceIntegration:
 
         # Extract attr before detached
         app_id = workspace_config.x_app_id
+        api_key = workspace_config.x_api_key
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{self.endpoints.LIST_API_KEYS}?user_id={app_id}",
                 headers={
                     "accept": "application/json",
-                    "X-API-KEY": self.trustai_master_key
+                    "X-API-KEY": api_key
                 }
             )
             response.raise_for_status()
