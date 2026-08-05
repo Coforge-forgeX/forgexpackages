@@ -13,10 +13,6 @@ class TrustAIEndpoints:
     # Base URL - can be overridden with environment variable
     BASE_URL = os.getenv(
         "TRUSTAI_BASE_URL",
-        "https://forgex-dev-trustai-qag.azurewebsites.net/trustai-api"
-    )
-    KEY_BASE_URL = os.getenv(
-        "TRUSTAI_BASE_URL",
         "https://forgex-dev-trustai-qag.azurewebsites.net"
     )
 
@@ -25,16 +21,16 @@ class TrustAIEndpoints:
     REGISTER_APP = f"{BASE_URL}/trustai-api/admin/apps"
 
     # API Key management endpoints
-    GENERATE_API_KEY = f"{KEY_BASE_URL}/api/v1/api-keys/"
-    LIST_API_KEYS = f"{KEY_BASE_URL}/api/v1/api-keys/"  # GET with ?user_id=<app_id>
+    GENERATE_API_KEY = f"{BASE_URL}/api/v1/api-keys/"
+    LIST_API_KEYS = f"{BASE_URL}/api/v1/api-keys/"  # GET with ?user_id=<app_id>
 
     # Guardrails configuration endpoints
-    GET_GUARDRAILS_CONFIG = f"{BASE_URL}/guardrails/configuration"
-    UPDATE_GUARDRAILS_CONFIG = f"{BASE_URL}/guardrails/configuration/batch"
-    GET_DEFAULT_CONFIG = f"{BASE_URL}/guardrails/default-config"
+    GET_GUARDRAILS_CONFIG = f"{BASE_URL}/trustai-api/guardrails/configuration"
+    UPDATE_GUARDRAILS_CONFIG = f"{BASE_URL}/trustai-api/guardrails/configuration/batch"
+    GET_DEFAULT_CONFIG = f"{BASE_URL}/trustai-api/guardrails/default-config"
 
     # LLM call endpoint
-    CHAT_COMPLETIONS = f"{BASE_URL}/ai-gateway/chat/completions"
+    CHAT_COMPLETIONS = f"{BASE_URL}/trustai-api/ai-gateway/chat/completions"
 
     @classmethod
     def get_base_url(cls) -> str:
@@ -50,11 +46,11 @@ class TrustAIEndpoints:
     @classmethod
     def _update_endpoints(cls):
         """Update all endpoint URLs when base URL changes."""
-        cls.REGISTER_APP = f"{cls.BASE_URL}/admin/apps"
-        cls.GENERATE_API_KEY = f"{cls.KEY_BASE_URL}/api/v1/api-keys/"
-        cls.LIST_API_KEYS = f"{cls.KEY_BASE_URL}/api/v1/api-keys/"
-        cls.GET_GUARDRAILS_CONFIG = f"{cls.BASE_URL}/guardrails/configuration"
-        cls.UPDATE_GUARDRAILS_CONFIG = f"{cls.BASE_URL}/guardrails/configuration/batch"
-        cls.GET_DEFAULT_CONFIG = f"{cls.BASE_URL}/guardrails/default-config"
-        cls.CHAT_COMPLETIONS = f"{cls.BASE_URL}/ai-gateway/chat/completions"
+        cls.REGISTER_APP = f"{cls.BASE_URL}/trustai-api/admin/apps"
+        cls.GENERATE_API_KEY = f"{cls.BASE_URL}/api/v1/api-keys/"
+        cls.LIST_API_KEYS = f"{cls.BASE_URL}/api/v1/api-keys/"
+        cls.GET_GUARDRAILS_CONFIG = f"{cls.BASE_URL}/trustai-api/guardrails/configuration"
+        cls.UPDATE_GUARDRAILS_CONFIG = f"{cls.BASE_URL}/trustai-api/guardrails/configuration/batch"
+        cls.GET_DEFAULT_CONFIG = f"{cls.BASE_URL}/trustai-api/guardrails/default-config"
+        cls.CHAT_COMPLETIONS = f"{cls.BASE_URL}/trustai-api/ai-gateway/chat/completions"
 
