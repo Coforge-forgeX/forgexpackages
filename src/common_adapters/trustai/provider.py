@@ -279,8 +279,8 @@ class TrustAIProvider:
                 # Detect guardrail blocking and raise exception
                 is_blocked = bool(blocked_by) or content == "Content blocked by guardrails"
                 if is_blocked:
-                    # Import here to avoid circular imports
-                    from kbcurator.utils.exceptions import GuardrailBlockedException, check_trustai_guardrail_response
+                    # Import here to avoid circular imports       
+                    from .exceptions import GuardrailBlockedException, check_trustai_guardrail_response
                     logger.warning(f"[TRUSTAI-PROVIDER] Request blocked by guardrails: {blocked_by}")
                     check_trustai_guardrail_response(data)
 
@@ -356,7 +356,7 @@ class TrustAIProvider:
                 
                 is_blocked = bool(blocked_by) or content == "Content blocked by guardrails"
                 if is_blocked:
-                    from kbcurator.utils.exceptions import check_trustai_guardrail_response
+                    from .exceptions import check_trustai_guardrail_response
                     logger.warning(f"[TRUSTAI-PROVIDER] Tool request blocked by guardrails: {blocked_by}")
                     check_trustai_guardrail_response(data)
 
