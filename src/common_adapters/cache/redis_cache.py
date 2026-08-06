@@ -1,5 +1,7 @@
 from mcp.server.fastmcp import FastMCP
 import redis
+import os
+import asyncio
 from .base_cache import BaseCache
 from .config import CacheConfig
 
@@ -18,9 +20,18 @@ class AzureRedisCache(BaseCache):
             host=azure_config["host"],
             port=azure_config["port"],
             password=azure_config["password"],
-            ssl=azure_config["ssl"]
+            ssl=azure_config["ssl"],
+            # Fail fast when Redis is unavailable so async request handlers
+            # don't stall for multiple seconds on each cancellation/config poll.
+            socket_connect_timeout=float(os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT", "1.0")),
+            socket_timeout=float(os.getenv("REDIS_SOCKET_TIMEOUT", "1.0")),
+            retry_on_timeout=False,
+            health_check_interval=30,
         )
         self.expiry_seconds = azure_config["expiry_seconds"]
+
+    async def _run_redis(self, fn, *args, **kwargs):
+        return await asyncio.to_thread(fn, *args, **kwargs)
     
     async def append_to_key(self,data: dict)->dict:
         """
@@ -34,7 +45,7 @@ class AzureRedisCache(BaseCache):
         """
         try:
             for key, value in data.items():
-                self.r.append(self.prefix+key, value)
+                await self._run_redis(self.r.append, self.prefix+key, value)
             return {"status": "success", "message": f"Data appended successfully to keys: {list(data.keys())}"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
@@ -55,11 +66,11 @@ class AzureRedisCache(BaseCache):
             for k , v in data.items():
                 prefix_data[self.prefix+k] = v
                 
-            self.r.mset(prefix_data)
+            await self._run_redis(self.r.mset, prefix_data)
             
             # Set expiration for each key to 15 minutes (900 seconds)
             for k in prefix_data.keys():
-                self.r.expire(k, self.expiry_seconds)
+                await self._run_redis(self.r.expire, k, self.expiry_seconds)
             
             return {"status": "success", "message": f"Data stored successfully under keys: {list(data.keys())},expiry set for 15minutes"}
         except Exception as e:
@@ -78,13 +89,13 @@ class AzureRedisCache(BaseCache):
         response = {}
         try:
             if(type(key) is str):
-                val = self.r.get(self.prefix+key)
+                val = await self._run_redis(self.r.get, self.prefix+key)
                 return {"status":"success","data":{f"{key}":val.decode()} if val else {}}
             
             prefix_key = []
             for k in key:
                 prefix_key.append(self.prefix + k)
-            values = self.r.mget(prefix_key)
+            values = await self._run_redis(self.r.mget, prefix_key)
             
             for k,v in zip(key,values):
                 if v:
@@ -103,17 +114,19 @@ class AzureRedisCache(BaseCache):
             dict: A dictionary containing all keys and their corresponding values.
         """
         try:
-            cursor = '0'
+            cursor = 0
             get_keys = []
             pattern = self.prefix+f'{uuid}*' if uuid else self.prefix +'*'
-            while cursor != 0:
-                cursor, keys = self.r.scan(cursor=cursor, match=pattern, count=100)
+            while True:
+                cursor, keys = await self._run_redis(self.r.scan, cursor=cursor, match=pattern, count=100)
                 get_keys.extend(keys)
+                if cursor == 0:
+                    break
                 
             response = {}
             
             for key in get_keys:
-                value = self.r.get(key)
+                value = await self._run_redis(self.r.get, key)
                 response[key.decode()] = value.decode() if value else None
                 # response[key.decode().replace(self.prefix,"")] = value.decode() if value else None
             
@@ -131,18 +144,20 @@ class AzureRedisCache(BaseCache):
            
         try:
             if uuid:
-                cursor = '0'
+                cursor = 0
                 flush_keys = []
                 pattern = self.prefix+(f'{uuid}*' if uuid else "*")
-                while cursor != 0:
-                    cursor, keys = self.r.scan(cursor=cursor, match=pattern, count=100)
+                while True:
+                    cursor, keys = await self._run_redis(self.r.scan, cursor=cursor, match=pattern, count=100)
                     flush_keys.extend(keys)
+                    if cursor == 0:
+                        break
                 print(flush_keys)
                 if len(flush_keys) > 0:
-                    self.r.delete(*flush_keys)
+                    await self._run_redis(self.r.delete, *flush_keys)
                 
             else:
-                self.r.flushall(asynchronous=True)
+                await self._run_redis(self.r.flushall, asynchronous=True)
                 
              
             return {"status": "success", "message": "All data flushed successfully."}
