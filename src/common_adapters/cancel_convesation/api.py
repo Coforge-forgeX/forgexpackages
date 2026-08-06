@@ -46,6 +46,7 @@ class _CancellationStore:
     def __init__(self, *, prefix: str = "cancel:") -> None:
         self._prefix = prefix
         self._cache = None
+        self._cache_disabled = False
         self._lock = threading.Lock()
         self._mem: dict[str, dict[str, Any]] = {}
 
@@ -54,13 +55,32 @@ class _CancellationStore:
         self._terminated: dict[str, dict[str, Any]] = {}
 
     def _get_cache(self):
+        if self._cache_disabled:
+            return None
         if self._cache is not None:
             return self._cache
         try:
             from common_adapters.cache import CacheFactory
 
             CacheFactory.initialize()
-            self._cache = CacheFactory.get_cache(prefix=self._prefix)
+            candidate = CacheFactory.get_cache(prefix=self._prefix)
+
+            # If cache is present but effectively unconfigured (empty host),
+            # disable it for process lifetime and use local-memory fallback.
+            host = None
+            try:
+                conn_pool = getattr(getattr(candidate, "r", None), "connection_pool", None)
+                conn_kwargs = getattr(conn_pool, "connection_kwargs", {}) if conn_pool else {}
+                host = (conn_kwargs.get("host") or "") if isinstance(conn_kwargs, dict) else ""
+            except Exception:
+                host = ""
+
+            if not str(host or "").strip():
+                logger.error("[CANCEL_STORE] Redis cache appears unconfigured (empty host). Disabling cache for process.")
+                self._disable_cache()
+                return None
+
+            self._cache = candidate
         except Exception:
             self._cache = None
         return self._cache
@@ -69,6 +89,7 @@ class _CancellationStore:
         # If Redis is misconfigured/unreachable, fall back to in-memory for the
         # rest of the process lifetime.
         self._cache = None
+        self._cache_disabled = True
 
     async def mark_cancelled(self, key: str, req: CancelRequest) -> None:
         payload = {
@@ -102,7 +123,25 @@ class _CancellationStore:
             try:
                 logger.debug(f"[CANCEL_CHECK] Checking Redis for cancellation key: {key}")
                 result = await cache.retrieve_data(key)
-                if result and result.get("status") == "success":
+                if result and result.get("status") != "success":
+                    msg = str(result.get("message") or "")
+                    msg_lower = msg.lower()
+                    if (
+                        "connecting to :" in msg or
+                        "name or service not known" in msg_lower or
+                        "nodename nor servname provided" in msg_lower or
+                        "or not known" in msg_lower or
+                        "certificate_verify_failed" in msg_lower or
+                        "self-signed certificate" in msg_lower or
+                        "operation not permitted" in msg_lower or
+                        "connection refused" in msg_lower or
+                        "timed out" in msg_lower
+                    ):
+                        logger.error(f"[CANCEL_CHECK] Redis misconfigured/unreachable; disabling cache for process. msg={msg}")
+                        self._disable_cache()
+                        cache = None
+
+                if cache is not None and result and result.get("status") == "success":
                     data = result.get("data", {})
                     cached = data.get(key)
                     if cached:
@@ -120,8 +159,11 @@ class _CancellationStore:
                 else:
                     logger.debug(f"[CANCEL_CHECK] Redis retrieve returned: {result}")
             except Exception as e:
-                # Fall back to local memory on Redis errors
-                logger.warning(f"[CANCEL_CHECK] Redis error for key {key}: {e}")
+                # In production, Redis network hiccups can add seconds per poll.
+                # Disable cache after first failure so cancellation checks fall back
+                # to process-local memory and remain responsive.
+                logger.error(f"[CANCEL_CHECK] Redis error for key {key}: {e} (disabling cache for process)")
+                self._disable_cache()
         else:
             logger.debug(f"[CANCEL_CHECK] Redis cache is None - using local memory only (multi-worker cancellation will NOT work!)")
 

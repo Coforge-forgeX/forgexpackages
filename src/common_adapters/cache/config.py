@@ -1,5 +1,5 @@
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from typing import Dict, Any
 
 
@@ -25,15 +25,21 @@ class CacheConfig:
 
     def _load_env(self):
         """Load environment variables."""
-        load_dotenv()
+        try:
+            load_dotenv(find_dotenv(usecwd=True), override=False)
+        except Exception:
+            # Fall back to default behavior if path discovery fails.
+            load_dotenv(override=False)
 
         # Redis Provider Configuration
         self.redis_provider = os.getenv("REDIS_PROVIDER", "azure").lower()
 
         # Azure Redis Configuration
-        self.azure_redis_host = os.getenv("AZURE_REDIS_HOST", "")
-        self.azure_redis_port = int(os.getenv("AZURE_REDIS_PORT", "6380"))
-        self.azure_redis_password = os.getenv("AZURE_REDIS_PASSWORD", "")
+        # Backward-compatible fallback to generic REDIS_* variables when
+        # AZURE_REDIS_* are not explicitly configured.
+        self.azure_redis_host = os.getenv("AZURE_REDIS_HOST") or os.getenv("REDIS_HOST", "")
+        self.azure_redis_port = int(os.getenv("AZURE_REDIS_PORT") or os.getenv("REDIS_PORT", "6380"))
+        self.azure_redis_password = os.getenv("AZURE_REDIS_PASSWORD") or os.getenv("REDIS_PASSWORD", "")
         self.azure_redis_ssl = os.getenv("AZURE_REDIS_SSL", "true").lower() == "true"
 
         # AWS Redis Configuration (ElastiCache)
