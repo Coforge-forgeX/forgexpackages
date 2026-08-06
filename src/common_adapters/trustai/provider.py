@@ -262,13 +262,27 @@ class TrustAIProvider:
                 )
                 response.raise_for_status()
                 data = response.json()
+                
+                # print(f"Response for above payload:\n{data} ")
 
+                # Check for guardrail blocks BEFORE extracting content
+                checks = data.get("checks", {})
+                blocked_by = checks.get("blocked_by", [])
+                
                 # Extract content from response
                 if 'choices' not in data or not data['choices']:
                     raise ValueError(f"Invalid response structure: {data}")
 
                 choice = data['choices'][0]
                 content = choice.get('message', {}).get('content', '')
+                
+                # Detect guardrail blocking and raise exception
+                is_blocked = bool(blocked_by) or content == "Content blocked by guardrails"
+                if is_blocked:
+                    # Import here to avoid circular imports
+                    from kbcurator.utils.exceptions import GuardrailBlockedException, check_trustai_guardrail_response
+                    logger.warning(f"[TRUSTAI-PROVIDER] Request blocked by guardrails: {blocked_by}")
+                    check_trustai_guardrail_response(data)
 
                 # Check finish reason
                 finish_reason = choice.get('finish_reason')
@@ -331,6 +345,20 @@ class TrustAIProvider:
                 data = response.json()
                 
                 # print(f"response from with tool chat completions/n{json.dumps(data, indent=2)}")
+
+                # Check for guardrail blocks BEFORE processing
+                checks = data.get("checks", {})
+                blocked_by = checks.get("blocked_by", [])
+                choices = data.get("choices", [])
+                content = ""
+                if choices:
+                    content = choices[0].get("message", {}).get("content", "")
+                
+                is_blocked = bool(blocked_by) or content == "Content blocked by guardrails"
+                if is_blocked:
+                    from kbcurator.utils.exceptions import check_trustai_guardrail_response
+                    logger.warning(f"[TRUSTAI-PROVIDER] Tool request blocked by guardrails: {blocked_by}")
+                    check_trustai_guardrail_response(data)
 
                 # Convert OpenAI tool calls -> LangChain tool calls
                 choices = data.get("choices", [])

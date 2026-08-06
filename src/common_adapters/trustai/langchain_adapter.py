@@ -196,6 +196,7 @@ class TrustAIChatModel(BaseChatModel):
         Returns:
             ChatResult with generated message
         """
+        print("[LANGCHAIN-ADAPTER] SYNC _generate called - this should NOT happen with ainvoke!", flush=True)
         # Run async method in sync context
         loop = asyncio.get_event_loop()
         if loop.is_running():
@@ -218,8 +219,13 @@ class TrustAIChatModel(BaseChatModel):
         """
         Generate chat completion (asynchronous).
         """
+        import time
+        start = time.time()
+        print(f"[LANGCHAIN-ADAPTER] _agenerate START", flush=True)
         provider = self._get_provider()
+        print(f"[LANGCHAIN-ADAPTER] Provider obtained in {time.time()-start:.2f}s", flush=True)
         message_dicts = self._convert_messages_to_dicts(messages)
+        print(f"[LANGCHAIN-ADAPTER] Messages converted, calling API...", flush=True)
 
         params = {
             "temperature": self.temperature,
@@ -278,10 +284,12 @@ class TrustAIChatModel(BaseChatModel):
                 )
 
             else:
+                print(f"[LANGCHAIN-ADAPTER] Calling chat_completion (no tools)...", flush=True)
                 content = await provider.chat_completion(
                     messages=message_dicts,
                     **params,
                 )
+                print(f"[LANGCHAIN-ADAPTER] chat_completion returned, total time: {time.time()-start:.2f}s", flush=True)
 
                 ai_message = AIMessage(content=content)
 
