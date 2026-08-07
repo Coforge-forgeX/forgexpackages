@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "common-adapters"
-version = "3.0.1"
+version = "3.1.0"
 description = "Shared adapter library for AI agents with database persistence"
 requires-python = ">=3.10"
 dependencies = [
@@ -55,6 +55,16 @@ dependencies = [
     # TrustAI Integration
     "sqlalchemy>=2.0.0",
     "psycopg2-binary>=2.9.0",
+    # Cloud abstraction (secrets management)
+    "azure-identity>=1.15.0",
+    "azure-keyvault-secrets>=4.8.0",
+    # Progress/Notifications (Service Bus transport)
+    "azure-servicebus>=7.11.0",
+]
+
+[project.optional-dependencies]
+mcp = [
+    "fastmcp>=2.0.0",
 ]
 
 [tool.setuptools.packages.find]
