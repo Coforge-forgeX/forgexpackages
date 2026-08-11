@@ -21,7 +21,7 @@ from langchain_core.messages import (
 )
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.callbacks import CallbackManagerForLLMRun, AsyncCallbackManagerForLLMRun
-
+import os
 from .provider import TrustAIProvider
 import json
 
@@ -77,7 +77,7 @@ class TrustAIChatModel(BaseChatModel):
     temperature: Optional[float] = 0.7
     """Sampling temperature."""
 
-    max_tokens: Optional[int] = 1000
+    max_tokens: Optional[int] = 5000
     """Maximum tokens to generate."""
 
     top_p: Optional[float] = 0.9
@@ -101,7 +101,7 @@ class TrustAIChatModel(BaseChatModel):
         config: Dict[str, Any],
         user_email: str, 
         temperature: Optional[float] = 0.7,
-        max_tokens: Optional[int] = 1000,
+        max_tokens: Optional[int] = 5000,
         top_p: Optional[float] = 0.9,
         streaming: bool = False,
         **kwargs: Any
@@ -125,7 +125,7 @@ class TrustAIChatModel(BaseChatModel):
             user_id=config.get('user_id'),
             user_email=user_email,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_tokens=os.getenv('AI_MAX_TOKENS',max_tokens),
             top_p=top_p,
             streaming=streaming,
             model_kwargs=kwargs
