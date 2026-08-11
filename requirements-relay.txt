@@ -1,0 +1,8 @@
+# Minimal requirements for Unified Relay deployment
+# Use this for Azure Web App deployment
+
+fastapi>=0.100.0
+uvicorn>=0.22.0
+gunicorn>=21.0.0
+azure-servicebus>=7.11.0
+websockets>=11.0.0
