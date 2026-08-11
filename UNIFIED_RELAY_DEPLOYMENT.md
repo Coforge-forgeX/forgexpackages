@@ -62,7 +62,7 @@ The unified relay subscribes to ALL agent topics and routes messages to the corr
 | Setting | Value |
 |---------|-------|
 | **Name** | `forgex-unified-relay` |
-| **Runtime** | Python 3.12 |
+| **Runtime** | Docker Container |
 | **Operating System** | Linux |
 | **SKU/Plan** | B1 or S1 (must support WebSockets) |
 | **Region** | Same as Service Bus (e.g., East US 2) |
@@ -77,11 +77,20 @@ Navigate to **Configuration → General settings**:
 | **Always On** | **ON** | ✅ Critical |
 | **HTTP Version** | 1.1 | Recommended |
 
-### Startup Command
+### Container Startup
 
-```bash
-gunicorn -k uvicorn.workers.UvicornWorker common_adapters.relay.unified_relay:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1
+The relay is deployed directly from the repository `Dockerfile`.
+
+The container startup command is:
+
+```dockerfile
+CMD ["sh","-c","gunicorn -k uvicorn.workers.UvicornWorker common_adapters.relay.unified_relay:app --bind 0.0.0.0:${PORT:-8000} --timeout 120 --workers 1"]
 ```
+
+Important:
+- Azure App Service injects a dynamic `PORT` environment variable
+- The container must bind to `${PORT}` or health checks fail with `503 Service Unavailable`
+- Do not hardcode port `8000` in Azure container deployments
 
 ---
 
@@ -94,7 +103,7 @@ gunicorn -k uvicorn.workers.UvicornWorker common_adapters.relay.unified_relay:ap
 | `SERVICE_BUS_CONNECTION_STRING` | `Endpoint=sb://forgexsb.servicebus.windows.net/;...` | Service Bus connection string |
 | `RELAY_TOPICS` | `ba-dev,po-dev,arch-dev` | Comma-separated list of topics to subscribe to |
 | `RELAY_SUBSCRIPTION_PREFIX` | `unified-relay` | Prefix for subscription names |
-| `PYTHONPATH` | `/home/site/wwwroot/src` | Required for imports |
+| `PYTHONPATH` | Not required | Package is installed inside the container |
 
 ### Optional Settings
 
@@ -151,59 +160,55 @@ forgexpackages/
 
 ## Deployment
 
-### Option 1: Deploy forgexpackages as a Package
+## Docker Deployment
 
-The unified relay is part of `common_adapters`. Deploy it by installing the package:
+The relay should be deployed using the repository `Dockerfile`.
 
-**requirements.txt for the Web App:**
-```txt
-common-adapters @ git+https://github.com/Coforge-forgeX/forgexpackages.git@main
-fastapi
-uvicorn
-gunicorn
-azure-servicebus
-```
+### Build Container
 
-### Option 2: Copy Files Directly
-
-```powershell
-# Create deployment package
-$deployDir = "unified-relay-deploy"
-New-Item -ItemType Directory -Force -Path $deployDir/src/common_adapters/relay
-
-# Copy relay module
-Copy-Item forgexpackages/src/common_adapters/relay/*.py $deployDir/src/common_adapters/relay/
-
-# Create __init__.py files
-"" | Out-File $deployDir/src/__init__.py
-"" | Out-File $deployDir/src/common_adapters/__init__.py
-
-# Create requirements.txt
-@"
-fastapi>=0.100.0
-uvicorn>=0.22.0
-gunicorn>=21.0.0
-azure-servicebus>=7.11.0
-"@ | Out-File $deployDir/requirements.txt
-
-# Create startup script
-@"
-#!/bin/bash
-cd /home/site/wwwroot
-gunicorn -k uvicorn.workers.UvicornWorker common_adapters.relay.unified_relay:app --bind 0.0.0.0:`$PORT --timeout 120 --workers 1
-"@ | Out-File $deployDir/startup.sh
-
-# ZIP and deploy
-Compress-Archive -Path "$deployDir/*" -DestinationPath unified-relay.zip -Force
-```
-
-Deploy:
 ```bash
-az webapp deployment source config-zip \
+docker build -t forgex-unified-relay .
+```
+
+### Run Locally
+
+```bash
+docker run -p 8000:8000 \
+  -e SERVICE_BUS_CONNECTION_STRING="<connection-string>" \
+  -e RELAY_TOPICS="ba-dev,po-dev" \
+  -e RELAY_SUBSCRIPTION_PREFIX="unified-relay" \
+  forgex-unified-relay
+```
+
+### Azure Container Registry (Optional)
+
+```bash
+az acr build \
+  --registry <acr-name> \
+  --image forgex-unified-relay:latest \
+  .
+```
+
+### Configure Azure Web App for Containers
+
+```bash
+az webapp create \
+    --resource-group <your-rg> \
+    --plan <your-plan> \
+    --name forgex-unified-relay \
+    --deployment-container-image-name <acr-name>.azurecr.io/forgex-unified-relay:latest
+```
+
+### Configure Container Settings
+
+```bash
+az webapp config container set \
     --resource-group <your-rg> \
     --name forgex-unified-relay \
-    --src unified-relay.zip
+    --container-image-name <acr-name>.azurecr.io/forgex-unified-relay:latest
 ```
+
+Do not configure a separate Startup Command in Azure when using the Docker container.
 
 ---
 
@@ -348,20 +353,21 @@ az webapp log tail --resource-group <your-rg> --name forgex-unified-relay
 - Verify CORS allows your frontend origin
 
 ### Import Errors
-- Verify `PYTHONPATH=/home/site/wwwroot/src`
-- Check all `__init__.py` files exist
+- Verify the Docker image builds successfully
+- Verify `pip install .` succeeds during image build
+- Verify the container starts locally before Azure deployment
 
 ---
 
 ## Azure CLI Quick Reference
 
 ```bash
-# Create Web App
+# Create Web App for Containers
 az webapp create \
     --resource-group <your-rg> \
     --plan <your-plan> \
     --name forgex-unified-relay \
-    --runtime "PYTHON:3.12"
+    --deployment-container-image-name <acr-name>.azurecr.io/forgex-unified-relay:latest
 
 # Enable WebSockets + Always On
 az webapp config set \
@@ -370,12 +376,6 @@ az webapp config set \
     --web-sockets-enabled true \
     --always-on true
 
-# Set Startup Command
-az webapp config set \
-    --resource-group <your-rg> \
-    --name forgex-unified-relay \
-    --startup-file "gunicorn -k uvicorn.workers.UvicornWorker common_adapters.relay.unified_relay:app --bind 0.0.0.0:\$PORT --timeout 120 --workers 1"
-
 # Set App Settings
 az webapp config appsettings set \
     --resource-group <your-rg> \
@@ -383,8 +383,7 @@ az webapp config appsettings set \
     --settings \
         SERVICE_BUS_CONNECTION_STRING="<connection-string>" \
         RELAY_TOPICS="ba-dev,po-dev,arch-dev" \
-        RELAY_SUBSCRIPTION_PREFIX="unified-relay" \
-        PYTHONPATH="/home/site/wwwroot/src"
+        RELAY_SUBSCRIPTION_PREFIX="unified-relay"
 ```
 
 ---

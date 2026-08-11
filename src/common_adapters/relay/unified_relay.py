@@ -474,6 +474,8 @@ class MultiTopicConsumer:
 config: Optional[RelayConfig] = None
 connection_manager: Optional[UnifiedConnectionManager] = None
 consumer: Optional[MultiTopicConsumer] = None
+startup_error: Optional[str] = None
+startup_complete: bool = False
 
 
 def _load_local_settings():
@@ -501,45 +503,55 @@ def _load_local_settings():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan management."""
-    global config, connection_manager, consumer
+    global config, connection_manager, consumer, startup_error, startup_complete
     
     # Load settings
     _load_local_settings()
     
-    # Initialize
-    config = RelayConfig()
-    connection_manager = UnifiedConnectionManager(
-        max_queue=config.max_queue,
-        ping_interval_s=config.ping_interval_s,
-        idle_timeout_s=config.idle_timeout_s,
-    )
-    consumer = MultiTopicConsumer(
-        connection_string=config.service_bus_connection_string,
-        topics=config.topics,
-        subscription_prefix=config.subscription_prefix,
-        connection_manager=connection_manager,
-    )
-    
-    print()
-    print("=" * 70)
-    print("  Unified Service Bus WebSocket Relay")
-    print("=" * 70)
-    print(f"  Topics:      {', '.join(config.topics)}")
-    print(f"  Subscription Prefix: {config.subscription_prefix}")
-    print(f"  WebSocket:   ws://{config.host}:{config.port}/ws?agent=<agent>&channel=<conv_id>")
-    print(f"  Health:      http://{config.host}:{config.port}/health")
-    print("=" * 70)
-    print()
-    
-    # Ensure subscriptions exist
-    await consumer.ensure_subscriptions()
-    
-    # Start consumers
-    await consumer.start()
-    
-    print()
-    print("🚀 Unified relay is ready!")
-    print()
+    startup_error = None
+    startup_complete = False
+
+    try:
+        # Initialize
+        config = RelayConfig()
+        connection_manager = UnifiedConnectionManager(
+            max_queue=config.max_queue,
+            ping_interval_s=config.ping_interval_s,
+            idle_timeout_s=config.idle_timeout_s,
+        )
+        consumer = MultiTopicConsumer(
+            connection_string=config.service_bus_connection_string,
+            topics=config.topics,
+            subscription_prefix=config.subscription_prefix,
+            connection_manager=connection_manager,
+        )
+        
+        print()
+        print("=" * 70)
+        print("  Unified Service Bus WebSocket Relay")
+        print("=" * 70)
+        print(f"  Topics:      {', '.join(config.topics)}")
+        print(f"  Subscription Prefix: {config.subscription_prefix}")
+        print(f"  WebSocket:   ws://{config.host}:{config.port}/ws?agent=<agent>&channel=<conv_id>")
+        print(f"  Health:      http://{config.host}:{config.port}/health")
+        print("=" * 70)
+        print()
+        
+        # Ensure subscriptions exist
+        await consumer.ensure_subscriptions()
+        
+        # Start consumers
+        await consumer.start()
+
+        startup_complete = True
+        
+        print()
+        print("Unified relay is ready")
+        print()
+    except Exception as e:
+        startup_error = str(e)
+        print(f"Startup initialization failed: {startup_error}")
+        print("Health endpoint will remain available for diagnostics")
     
     yield
     
@@ -547,8 +559,11 @@ async def lifespan(app: FastAPI):
     print()
     print("🛑 Shutting down...")
     
-    await consumer.stop()
-    await connection_manager.close_all()
+    if consumer:
+        await consumer.stop()
+
+    if connection_manager:
+        await connection_manager.close_all()
     
     print("✓ Shutdown complete")
 
@@ -575,8 +590,10 @@ async def health() -> dict:
     stats = connection_manager.get_stats() if connection_manager else {}
     
     return {
-        "status": "ok",
+        "status": "ok" if startup_complete else "degraded",
         "service": "unified-servicebus-relay",
+        "startup_complete": startup_complete,
+        "startup_error": startup_error,
         "topics": config.topics if config else [],
         "subscription_prefix": config.subscription_prefix if config else "",
         "stats": stats,
@@ -595,6 +612,8 @@ async def root() -> dict:
         },
         "agents": ["ba", "po", "architect", "qa", "all"],
         "topics": config.topics if config else [],
+        "startup_complete": startup_complete,
+        "startup_error": startup_error,
     }
 
 
