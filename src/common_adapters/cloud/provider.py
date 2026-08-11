@@ -14,6 +14,7 @@ class CloudProvider(str, Enum):
     """Supported cloud providers."""
     AZURE = "azure"
     AWS = "aws"
+    GCP = "gcp"
     LOCAL = "local"
 
     @classmethod
@@ -22,12 +23,12 @@ class CloudProvider(str, Enum):
         Parse a string into CloudProvider enum.
         
         Args:
-            value: Provider string (azure, aws, local) - case insensitive
+            value: Provider string (azure, aws, gcp, local) - case insensitive
             
         Returns:
             CloudProvider enum value, defaults to LOCAL if invalid
         """
         normalized = value.strip().lower() if value else ""
-        if normalized in {"azure", "aws", "local"}:
+        if normalized in {"azure", "aws", "gcp", "local"}:
             return cls(normalized)
         return cls.LOCAL

@@ -3,8 +3,7 @@ Object Storage Abstraction
 
 Cloud-agnostic object storage supporting:
 - Azure Blob Storage
-- AWS S3
-
+- AWS S3- Google Cloud Storage (GCS)
 Agent creates the appropriate service by passing explicit configuration.
 """
 
@@ -160,3 +159,67 @@ class S3StorageService:
 
     def get_container_client(self, container_name: str) -> S3ContainerClient:
         return S3ContainerClient(self._s3, container_name)
+
+
+# =============================================================================
+# Google Cloud Storage (GCS)
+# =============================================================================
+
+
+class GcsBlobHandle:
+    """GCS blob handle for existence checks."""
+    
+    def __init__(self, blob):
+        self._blob = blob
+
+    def exists(self) -> bool:
+        return self._blob.exists()
+
+
+class GcsContainerClient:
+    """GCS bucket operations wrapper."""
+    
+    def __init__(self, bucket):
+        self._bucket = bucket
+
+    def list_blobs(self, name_starts_with: str):
+        for blob in self._bucket.list_blobs(prefix=name_starts_with):
+            yield BlobItem(name=blob.name)
+
+    def download_blob(self, blob_name: str) -> BlobDownload:
+        blob = self._bucket.blob(blob_name)
+        return BlobDownload(blob.download_as_bytes())
+
+    def get_blob_client(self, blob_name: str) -> GcsBlobHandle:
+        return GcsBlobHandle(self._bucket.blob(blob_name))
+
+    def upload_blob(self, *, name: str, data: str, overwrite: bool, content_type: str) -> None:
+        blob = self._bucket.blob(name)
+        if not overwrite and blob.exists():
+            return
+        blob.upload_from_string(data, content_type=content_type)
+
+
+class GcsStorageService:
+    """Google Cloud Storage implementation."""
+    
+    def __init__(self, project_id: str | None = None):
+        """
+        Args:
+            project_id: GCP project ID. If None, uses default from environment.
+        """
+        from google.cloud import storage
+        import os
+
+        self._project_id = project_id or os.getenv("GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        self._client = storage.Client(project=self._project_id)
+
+    def ensure_container(self, container_name: str) -> None:
+        try:
+            self._client.get_bucket(container_name)
+        except Exception:
+            self._client.create_bucket(container_name)
+
+    def get_container_client(self, container_name: str) -> GcsContainerClient:
+        bucket = self._client.bucket(container_name)
+        return GcsContainerClient(bucket)

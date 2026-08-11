@@ -43,12 +43,18 @@ from common_adapters.cloud import CloudProvider
 # Parse from string (case-insensitive)
 provider = CloudProvider.parse("azure")  # CloudProvider.AZURE
 provider = CloudProvider.parse("aws")    # CloudProvider.AWS
+provider = CloudProvider.parse("gcp")    # CloudProvider.GCP
 provider = CloudProvider.parse("local")  # CloudProvider.LOCAL
 ```
 
 #### Secret Providers
 ```python
-from common_adapters.cloud import EnvSecretProvider, AzureKeyVaultSecretProvider
+from common_adapters.cloud import (
+    EnvSecretProvider,
+    AzureKeyVaultSecretProvider,
+    AwsSecretsManagerProvider,
+    GcpSecretManagerProvider,
+)
 
 # Environment-based secrets
 env_secrets = EnvSecretProvider(env_getter=os.getenv)
@@ -56,24 +62,44 @@ value = env_secrets.get_secret("MY_SECRET_KEY")
 
 # Azure Key Vault secrets
 kv_secrets = AzureKeyVaultSecretProvider(keyvault_url="https://my-vault.vault.azure.net")
-value = await kv_secrets.get_secret("my-secret")
+value = kv_secrets.get_secret("my-secret")
+
+# AWS Secrets Manager
+aws_secrets = AwsSecretsManagerProvider(region_name="us-east-1")
+value = aws_secrets.get_secret("my-secret")
+
+# GCP Secret Manager
+gcp_secrets = GcpSecretManagerProvider(project_id="my-gcp-project")
+value = gcp_secrets.get_secret("my-secret")
 ```
 
 #### Object Storage
 ```python
-from common_adapters.cloud import AzureBlobStorageService, S3StorageService
+from common_adapters.cloud import (
+    AzureBlobStorageService,
+    S3StorageService,
+    GcsStorageService,
+)
 
 # Azure Blob Storage
 azure_storage = AzureBlobStorageService(
     connection_string="DefaultEndpointsProtocol=https;AccountName=..."
 )
-content = await azure_storage.download_blob("container-name", "blob-path")
-await azure_storage.upload_blob("container-name", "blob-path", content)
+container = azure_storage.get_container_client("container-name")
+blob = container.download_blob("blob-path")
+container.upload_blob(name="blob-path", data="content", overwrite=True, content_type="text/plain")
 
 # AWS S3
 s3_storage = S3StorageService(region_name="us-east-1")
-content = await s3_storage.download_blob("bucket-name", "key")
-await s3_storage.upload_blob("bucket-name", "key", content)
+bucket = s3_storage.get_container_client("bucket-name")
+blob = bucket.download_blob("key")
+bucket.upload_blob(name="key", data="content", overwrite=True, content_type="text/plain")
+
+# Google Cloud Storage
+gcs_storage = GcsStorageService(project_id="my-gcp-project")
+bucket = gcs_storage.get_container_client("bucket-name")
+blob = bucket.download_blob("object-path")
+bucket.upload_blob(name="object-path", data="content", overwrite=True, content_type="text/plain")
 ```
 
 ---
@@ -223,13 +249,22 @@ from common_adapters.cloud import get_secret_provider
 provider = get_secret_provider()  # Auto-detect from env
 
 # NEW
-from common_adapters.cloud import EnvSecretProvider, AzureKeyVaultSecretProvider
+from common_adapters.cloud import (
+    EnvSecretProvider,
+    AzureKeyVaultSecretProvider,
+    AwsSecretsManagerProvider,
+    GcpSecretManagerProvider,
+)
 
 secret_provider_type = os.getenv("SECRET_PROVIDER", "env")
 if secret_provider_type == "env":
     provider = EnvSecretProvider(env_getter=os.getenv)
 elif secret_provider_type == "azure_keyvault":
     provider = AzureKeyVaultSecretProvider(keyvault_url=os.getenv("KEYVAULT_URL"))
+elif secret_provider_type == "aws_secrets_manager":
+    provider = AwsSecretsManagerProvider(region_name=os.getenv("AWS_REGION"))
+elif secret_provider_type == "gcp_secret_manager":
+    provider = GcpSecretManagerProvider(project_id=os.getenv("GCP_PROJECT_ID"))
 ```
 
 #### Object Storage
@@ -239,15 +274,21 @@ from common_adapters.cloud import get_object_storage_service
 storage = get_object_storage_service()  # Auto-detect from env
 
 # NEW
-from common_adapters.cloud import AzureBlobStorageService, S3StorageService
+from common_adapters.cloud import (
+    AzureBlobStorageService,
+    S3StorageService,
+    GcsStorageService,
+)
 
 storage_type = os.getenv("OBJECT_STORAGE_PROVIDER", "azure_blob")
 if storage_type == "azure_blob":
     storage = AzureBlobStorageService(
         connection_string=os.getenv("AZURE_BLOB_STORAGE_CONNECTION_STRING")
     )
-elif storage_type == "s3":
+elif storage_type in {"s3", "aws_s3"}:
     storage = S3StorageService(region_name=os.getenv("AWS_REGION", "us-east-1"))
+elif storage_type in {"gcs", "gcp_gcs"}:
+    storage = GcsStorageService(project_id=os.getenv("GCP_PROJECT_ID"))
 ```
 
 #### Progress Publisher
@@ -720,7 +761,7 @@ await reporter.emit(
 
 ### Cloud Module Architecture
 
-The Cloud module provides cloud-agnostic abstractions for provider detection, secrets, and object storage.
+The Cloud module provides cloud-agnostic abstractions for provider detection, secrets, and object storage across Azure, AWS, GCP, and local environments.
 
 #### Available Exports
 
@@ -733,11 +774,13 @@ from common_adapters.cloud import (
     EnvSecretProvider,
     AzureKeyVaultSecretProvider,
     AwsSecretsManagerProvider,
+    GcpSecretManagerProvider,
     extract_from_json,
     # Object Storage
     ObjectStorageService,
     AzureBlobStorageService,
     S3StorageService,
+    GcsStorageService,
     BlobItem,
     BlobDownload,
 )
@@ -747,13 +790,15 @@ from common_adapters.cloud import (
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLOUD_PROVIDER` | `local` | Provider: `azure`, `aws`, `local` |
-| `SECRET_PROVIDER` | `env` | Secret backend: `env`, `azure_keyvault`, `aws_secrets_manager` |
-| `OBJECT_STORAGE_PROVIDER` | - | Storage backend: `azure_blob`, `aws_s3` |
+| `CLOUD_PROVIDER` | `local` | Provider: `azure`, `aws`, `gcp`, `local` |
+| `SECRET_PROVIDER` | `env` | Secret backend: `env`, `azure_keyvault`, `aws_secrets_manager`, `gcp_secret_manager` |
+| `OBJECT_STORAGE_PROVIDER` | - | Storage backend: `azure_blob`, `aws_s3`, `gcp_gcs` |
 | `AZURE_BLOB_STORAGE_CONNECTION_STRING` | - | Azure Blob connection string |
 | `BLOB_STORAGE_CONNECTION_STRING` | - | Alternative Azure Blob connection |
 | `AWS_REGION` | - | AWS region for S3 and Secrets Manager |
 | `KEYVAULT_URL` | - | Azure Key Vault URL |
+| `GCP_PROJECT_ID` | - | GCP project ID for GCS and Secret Manager |
+| `GOOGLE_CLOUD_PROJECT` | - | Alternative GCP project ID (auto-detected in Cloud Run/Functions) |
 
 ---
 
@@ -794,6 +839,8 @@ src/core/
 
 Re-exports from common_adapters.cloud with agent-specific
 auto-resolution factories from environment variables.
+
+Supports: Azure, AWS, GCP, Local
 """
 
 from common_adapters.cloud import (
@@ -802,10 +849,12 @@ from common_adapters.cloud import (
     EnvSecretProvider,
     AzureKeyVaultSecretProvider,
     AwsSecretsManagerProvider,
+    GcpSecretManagerProvider,
     extract_from_json,
     ObjectStorageService,
     AzureBlobStorageService,
     S3StorageService,
+    GcsStorageService,
     BlobItem,
     BlobDownload,
 )
@@ -819,6 +868,13 @@ __all__ = [
     "CloudProvider",
     "SecretProvider",
     "EnvSecretProvider",
+    "AzureKeyVaultSecretProvider",
+    "AwsSecretsManagerProvider",
+    "GcpSecretManagerProvider",
+    "ObjectStorageService",
+    "AzureBlobStorageService",
+    "S3StorageService",
+    "GcsStorageService",
     # ... all exports
     "resolve_cloud_provider",
     "get_object_storage_service",
@@ -968,7 +1024,7 @@ export function useAgentProgress(conversationId: string, relayUrl = 'ws://127.0.
 
 ## Version
 
-Current version: **3.1.0**
+Current version: **3.2.0**
 
 ## Repository
 

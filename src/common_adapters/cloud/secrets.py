@@ -99,6 +99,39 @@ class AwsSecretsManagerProvider:
             return default_value
 
 
+class GcpSecretManagerProvider:
+    """Retrieve secrets from Google Cloud Secret Manager."""
+    
+    def __init__(self, project_id: str | None = None):
+        """
+        Args:
+            project_id: GCP project ID. If None, uses default from environment.
+        """
+        self._client = None
+        self._project_id = project_id
+        try:
+            from google.cloud import secretmanager
+
+            self._client = secretmanager.SecretManagerServiceClient()
+            # If no project_id provided, try to get from environment
+            if not self._project_id:
+                import os
+                self._project_id = os.getenv("GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        except Exception:
+            self._client = None
+
+    def get_secret(self, secret_name: str, default_value: str = "") -> str:
+        if not self._client or not self._project_id:
+            return default_value
+        try:
+            # Build the resource name: projects/{project}/secrets/{secret}/versions/latest
+            name = f"projects/{self._project_id}/secrets/{secret_name}/versions/latest"
+            response = self._client.access_secret_version(request={"name": name})
+            return response.payload.data.decode("utf-8")
+        except Exception:
+            return default_value
+
+
 def extract_from_json(secret_payload: str, key: str, fallback: str = "") -> str:
     """
     Extract a field from a JSON secret payload.

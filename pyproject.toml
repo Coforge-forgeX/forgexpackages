@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "common-adapters"
-version = "3.1.0"
+version = "3.2.0"
 description = "Shared adapter library for AI agents with database persistence"
 requires-python = ">=3.10"
 dependencies = [
@@ -60,6 +60,9 @@ dependencies = [
     "azure-keyvault-secrets>=4.8.0",
     # Progress/Notifications (Service Bus transport)
     "azure-servicebus>=7.11.0",
+    # GCP Cloud abstraction (storage and secrets)
+    "google-cloud-storage>=2.14.0",
+    "google-cloud-secret-manager>=2.18.0",
 ]
 
 [project.optional-dependencies]

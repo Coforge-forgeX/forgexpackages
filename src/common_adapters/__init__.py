@@ -2,7 +2,7 @@
 Common Adapters - Shared adapter library for AI agents
 
 This package provides cloud-agnostic adapters and utilities for:
-- Cloud provider abstraction (Azure, AWS, Local)
+- Cloud provider abstraction (Azure, AWS, GCP, Local)
 - Push notifications via WebSocket
 - Progress reporting with multiple backends
 - MCP client framework
