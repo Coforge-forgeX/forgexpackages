@@ -213,7 +213,7 @@ Do not configure a separate Startup Command in Azure when using the Docker conta
 ---
 
 ## WebSocket Connection
-
+#### wss://forgex-unified-relay-dcfuevd7dgb8fzep.eastus2-01.azurewebsites.net/ws?agent=ba&channel=test-conv-001
 ### Frontend Usage
 
 ```javascript
