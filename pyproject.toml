@@ -63,6 +63,12 @@ dependencies = [
     # GCP Cloud abstraction (storage and secrets)
     "google-cloud-storage>=2.14.0",
     "google-cloud-secret-manager>=2.18.0",
+    # Realy service
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "gunicorn>=21.0.0",
+    "azure-servicebus>=7.11.0",
+    "websockets>=11.0.0
 ]
 
 [project.optional-dependencies]
