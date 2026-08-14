@@ -7,10 +7,87 @@ import logging
 import random
 import re
 import time
+from dataclasses import dataclass, field
 from functools import wraps
+from http import HTTPStatus
 from typing import Any, Awaitable, Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class ErrorContext:
+    """Normalized reusable error payload."""
+
+    message: str
+    status_code: int = 500
+    error_code: str = "INTERNAL_SERVER_ERROR"
+    details: dict[str, Any] = field(default_factory=dict)
+    category: str = "server_error"
+    retryable: bool = False
+
+
+class ApplicationError(Exception):
+    """Reusable transport-agnostic application exception."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int = 500,
+        error_code: str | None = None,
+        details: Optional[dict[str, Any]] = None,
+        retryable: bool | None = None,
+    ):
+        self.context = ErrorContext(
+            message=message,
+            status_code=status_code,
+            error_code=error_code or _default_error_code(status_code),
+            details=details or {},
+            category=_status_category(status_code),
+            retryable=_is_retryable(status_code) if retryable is None else retryable,
+        )
+        super().__init__(message)
+
+
+def _status_category(status_code: int) -> str:
+    if 400 <= status_code < 500:
+        return "client_error"
+    if status_code >= 500:
+        return "server_error"
+    return "unknown"
+
+
+def _is_retryable(status_code: int) -> bool:
+    return status_code in {408, 425, 429} or status_code >= 500
+
+
+def _default_error_code(status_code: int) -> str:
+    try:
+        return HTTPStatus(status_code).name
+    except ValueError:
+        return "INTERNAL_SERVER_ERROR"
+
+
+def normalize_exception(exc: Exception) -> ErrorContext:
+    """Convert arbitrary exceptions into a reusable error context."""
+
+    if isinstance(exc, ApplicationError):
+        return exc.context
+
+    status_code = getattr(exc, "status_code", 500)
+    details = getattr(exc, "details", {}) or {}
+    error_code = getattr(exc, "error_code", _default_error_code(status_code))
+    message = getattr(exc, "message", None) or sanitize_exception_text(exc)
+
+    return ErrorContext(
+        message=message,
+        status_code=status_code,
+        error_code=error_code,
+        details=details,
+        category=_status_category(status_code),
+        retryable=_is_retryable(status_code),
+    )
 
 _SENSITIVE_PATTERNS = [
     (re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9\-._~+/]+=*"), r"\1[REDACTED]"),
@@ -68,6 +145,33 @@ def build_error_response(
         "content": content,
         "metadata": response_metadata,
     }
+
+
+def build_api_error_payload(
+    exc: Exception,
+    *,
+    correlation_id: str | None = None,
+    include_details: bool = True,
+) -> dict[str, Any]:
+    """Create consistent API-safe error payloads for 4xx/5xx responses."""
+
+    context = normalize_exception(exc)
+    payload: dict[str, Any] = {
+        "success": False,
+        "error": context.error_code,
+        "message": context.message,
+        "status_code": context.status_code,
+        "category": context.category,
+        "retryable": context.retryable,
+    }
+
+    if include_details and context.details:
+        payload["details"] = context.details
+
+    if correlation_id:
+        payload["correlation_id"] = correlation_id
+
+    return payload
 
 
 async def async_with_retry(
