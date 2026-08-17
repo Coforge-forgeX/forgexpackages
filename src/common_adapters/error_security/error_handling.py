@@ -7,12 +7,23 @@ import logging
 import random
 import re
 import time
+from datetime import datetime
 from dataclasses import dataclass, field
 from functools import wraps
 from http import HTTPStatus
 from typing import Any, Awaitable, Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "X-XSS-Protection": "1; mode=block",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+}
 
 
 @dataclass(slots=True)
@@ -171,6 +182,36 @@ def build_api_error_payload(
     if correlation_id:
         payload["correlation_id"] = correlation_id
 
+    return payload
+
+
+def apply_security_headers(headers: Any) -> Any:
+    """Apply shared security headers to mutable response headers."""
+
+    try:
+        for header, value in SECURITY_HEADERS.items():
+            if header not in headers:
+                headers[header] = value
+    except Exception:
+        logger.debug("Unable to apply security headers", exc_info=True)
+
+    return headers
+
+
+def build_http_error_payload(
+    exc: Exception,
+    *,
+    correlation_id: str | None = None,
+    include_details: bool = True,
+) -> dict[str, Any]:
+    """Create a normalized HTTP-safe error payload with timestamp metadata."""
+
+    payload = build_api_error_payload(
+        exc,
+        correlation_id=correlation_id,
+        include_details=include_details,
+    )
+    payload["timestamp"] = datetime.utcnow().isoformat()
     return payload
 
 
