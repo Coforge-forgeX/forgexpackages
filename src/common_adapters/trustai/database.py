@@ -46,6 +46,7 @@ class TrustAIDatabaseManager:
         self.engine = None
         self.SessionLocal = None
         self._initialize_engine()
+        self.initialize_tables()
 
     def _initialize_engine(self):
         """Initialize SQLAlchemy engine and session factory."""
