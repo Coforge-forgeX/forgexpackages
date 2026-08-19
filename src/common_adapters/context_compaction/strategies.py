@@ -46,8 +46,7 @@ class SummarizeOldMessagesStrategy:
                 f"{m.get('role', 'user')}: {m.get('content', '')}" for m in old_msgs
             )
             logger.debug(f"Invoking LLM for summarization with input length {len(summary_input)} characters.")
-            summary = await llm.invoke_async(
-                sys_prompt=(
+            summary_prompt = (
                     "You are a context compression assistant.\n\n"
                     "Your task is to reduce the conversation into a compact memory while preserving all important information.\n\n"
                     "RULES:\n"
@@ -63,9 +62,26 @@ class SummarizeOldMessagesStrategy:
                     "- Key Entities:\n\n"
                     "Write short bullet points (2 line each). "
                     "Do NOT make it verbose. Keep it compact but complete."
-                ),
-                input=summary_input
-            )
+                )
+
+            if hasattr(llm, "invoke_async"):
+                summary = await llm.invoke_async(
+                    sys_prompt=summary_prompt,
+                    input=summary_input
+                )
+            else:
+                summary_response = await llm.ainvoke([
+                    {
+                        "role": "system",
+                        "content": summary_prompt,
+                    },
+                    {
+                        "role": "user",
+                        "content": summary_input,
+                    },
+                ])
+                summary = getattr(summary_response, "content", str(summary_response))
+
             logger.info("Summarization complete. Returning summary and recent messages.")
             logger.info(f"Summary content: [{self.summary_label}] {summary}")
             logger.info("Exiting SummarizeOldMessagesStrategy.compact (summary performed).")
