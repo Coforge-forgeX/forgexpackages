@@ -7,6 +7,8 @@ from cachetools import TTLCache
 import asyncio
 from threading import Lock
 import json
+import os
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
 
@@ -21,8 +23,48 @@ class JiraClientManagerAsync:
         self.client_cache = TTLCache(maxsize=1000, ttl=900)  # 15 minutes TTL
         self.lock = Lock()
 
+    @staticmethod
+    def _load_local_settings_credentials() -> Optional[list[str]]:
+        try:
+            project_root = Path(__file__).resolve().parents[4]
+
+            for settings_path in project_root.glob("*/local.settings.json"):
+                try:
+                    payload = json.loads(settings_path.read_text(encoding="utf-8"))
+                    values = payload.get("Values", {})
+
+                    email = str(values.get("LOCAL_JIRA_EMAIL", "")).strip()
+                    token = str(values.get("LOCAL_JIRA_API_TOKEN", "")).strip()
+                    url = str(values.get("LOCAL_JIRA_PROJECT_URL", "")).strip()
+
+                    if email and token and url:
+                        logging.info(
+                            f"Using Jira credentials from fallback settings file: {settings_path}"
+                        )
+                        return [email, token, url]
+                except Exception as inner_exc:
+                    logging.warning(
+                        f"Failed parsing settings file {settings_path}: {inner_exc}"
+                    )
+        except Exception as exc:
+            logging.warning(f"Failed loading local Jira credentials: {exc}")
+
+        return None
+
     async def _fetch_credentials(self,workspace_id: str , user_id:str , conversation_id: str) -> Optional[str]:
-        
+
+        local_email = os.getenv("LOCAL_JIRA_EMAIL", "").strip()
+        local_token = os.getenv("LOCAL_JIRA_API_TOKEN", "").strip()
+        local_url = os.getenv("LOCAL_JIRA_PROJECT_URL", "").strip()
+
+        logging.info(
+            f"LOCAL_JIRA_EMAIL present={bool(local_email)} LOCAL_JIRA_API_TOKEN present={bool(local_token)} LOCAL_JIRA_PROJECT_URL present={bool(local_url)}"
+        )
+
+        if local_email and local_token and local_url:
+            logging.info("Using local Jira credentials from environment settings")
+            return [local_email, local_token, local_url]
+
         if not self.config_manager:
                 raise ValueError("config_manager not provided to JiraClientManagerAsync")
             
@@ -52,6 +94,12 @@ class JiraClientManagerAsync:
             return [email , token , jira_url]
         except Exception as e:  
             logging.error(f"Error fetching Jira credentials from Redis: {e}")
+
+            local_settings_credentials = self._load_local_settings_credentials()
+
+            if local_settings_credentials:
+                return local_settings_credentials
+
             raise
 
     async def _create_client(self,jira_url:str, email: str, token: str) -> Optional[Jira]:
