@@ -9,7 +9,7 @@ Architecture:
     ┌─────────────────────────────────────────────────────────┐
     │                   Azure Service Bus                      │
     │  ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐  │
-    │  │ ba-dev  │   │ po-dev  │   │arch-dev │   │ qa-dev  │  │
+    │  │ ba-dev  │   │ po-dev  │   │arch-dev │   │ qe-dev  │  │
     │  └────┬────┘   └────┬────┘   └────┬────┘   └────┬────┘  │
     └───────┼─────────────┼─────────────┼─────────────┼───────┘
             │             │             │             │
@@ -50,11 +50,14 @@ Usage:
 Connect via WebSocket:
     ws://host:port/ws?agent=ba&channel=<conversation_id>
     ws://host:port/ws?agent=po&channel=<conversation_id>
-    ws://host:port/ws?agent=architect&channel=<conversation_id>
+    ws://host:port/ws?agent=arch&channel=<conversation_id>
+    ws://host:port/ws?agent=qe&channel=<conversation_id>
+    ws://host:port/ws?agent=devagent&channel=<conversation_id>
+    ws://host:port/ws?agent=kb&channel=<conversation_id>
 
 Environment Variables:
     SERVICE_BUS_CONNECTION_STRING: Azure Service Bus connection string
-    RELAY_TOPICS: Comma-separated list of topics (default: ba-dev,po-dev,arch-dev)
+    RELAY_TOPICS: Comma-separated list of topics (default: ba-dev,po-dev,arch-dev,qe-dev,devagent-dev,kb-dev)
     RELAY_SUBSCRIPTION_PREFIX: Subscription name prefix (default: unified-relay)
     PORT: Server port (default: 8000)
 """
@@ -107,7 +110,7 @@ class RelayConfig:
 
 def _parse_topics() -> list[str]:
     """Parse topics from environment variable."""
-    topics_str = os.getenv("RELAY_TOPICS", "ba-dev,po-dev,arch-dev")
+    topics_str = os.getenv("RELAY_TOPICS", "ba-dev,po-dev,arch-dev,qe-dev,devagent-dev,kb-dev")
     return [t.strip() for t in topics_str.split(",") if t.strip()]
 
 
@@ -118,10 +121,14 @@ def _topic_to_agent(topic: str) -> str:
         "ba-prod": "ba",
         "po-dev": "po",
         "po-prod": "po",
-        "arch-dev": "architect",
-        "arch-prod": "architect",
-        "qa-dev": "qa",
-        "qa-prod": "qa",
+        "arch-dev": "arch",
+        "arch-prod": "arch",
+        "qe-dev": "qe",
+        "qe-prod": "qe",
+        "devagent-dev": "devagent",
+        "devagent-prod": "devagent",
+        "kb-dev": "kb",
+        "kb-prod": "kb",
     }
     return mapping.get(topic, topic.split("-")[0])
 
@@ -136,7 +143,7 @@ class ClientConnection:
     websocket: WebSocket
     session_id: str
     tab_id: str
-    agent: str  # Which agent this client is listening to (ba, po, architect, all)
+    agent: str  # Which agent this client is listening to (ba, po, qe, arch, devagent, kb, all)
     last_seen: float = field(default_factory=lambda: asyncio.get_event_loop().time())
 
 
@@ -610,7 +617,7 @@ async def root() -> dict:
             "health": "/health",
             "websocket": "/ws?agent=<agent>&channel=<conversation_id>",
         },
-        "agents": ["ba", "po", "architect", "qa", "all"],
+        "agents": ["ba", "po", "qe", "arch", "devagent", "kb", "all"],
         "topics": config.topics if config else [],
         "startup_complete": startup_complete,
         "startup_error": startup_error,
@@ -620,7 +627,7 @@ async def root() -> dict:
 @app.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
-    agent: str = Query(default="all", description="Agent type: ba, po, architect, qa, or all"),
+    agent: str = Query(default="all", description="Agent type: ba, po, qe, arch, devagent, kb, or all"),
     channel: str = Query(default=None, description="Conversation/session ID"),
     session_id: str = Query(default=None, description="Alias for channel"),
     tab_id: str = Query(default=None, description="Browser tab ID"),
@@ -629,7 +636,7 @@ async def websocket_endpoint(
     WebSocket endpoint for receiving agent progress messages.
     
     Query Parameters:
-    - agent: Which agent to listen to (ba, po, architect, qa, all)
+    - agent: Which agent to listen to (ba, po, qe, arch, devagent, kb, all)
     - channel/session_id: Conversation or session ID for routing
     - tab_id: Unique browser tab identifier (auto-generated if missing)
     

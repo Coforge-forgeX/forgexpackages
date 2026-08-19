@@ -17,6 +17,7 @@ from .providers import ProviderRegistry, BaseAIProvider
 from .config import (
     AIProviderConfig, 
     AzureOpenAIConfig,
+    AzureAnthropicConfig,
     QuasarConfig
 )
 
@@ -821,6 +822,8 @@ class ConfigurableAIManager:
             # Create config from environment
             if provider_name == "azure":
                 config = AzureOpenAIConfig.from_env()
+            elif provider_name in ["azure_anthropic", "anthropic"]:
+                config = AzureAnthropicConfig.from_env()
             elif provider_name == "quasar":
                 config = QuasarConfig.from_env()
             else:
@@ -1060,6 +1063,8 @@ class ConfigurableAIManager:
         
         if provider_name == "azure":
             return AzureOpenAIConfig(**config_dict)
+        elif provider_name in ["azure_anthropic", "anthropic"]:
+            return AzureAnthropicConfig(**config_dict)
         elif provider_name == "quasar":
             return QuasarConfig(**config_dict)
         else:

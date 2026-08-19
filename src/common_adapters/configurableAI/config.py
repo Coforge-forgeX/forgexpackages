@@ -1,6 +1,6 @@
 """
 Configuration classes for AI providers.
-Only supports Azure and Quasar providers.
+Supports Azure OpenAI, Azure Anthropic and Quasar providers.
 """
 
 from typing import Dict, Any, Optional
@@ -93,5 +93,37 @@ class QuasarConfig(AIProviderConfig):
             api_key=api_key,
             endpoint=endpoint,
             model=model,
+            extra_params={}
+        )
+
+
+@dataclass
+class AzureAnthropicConfig(AIProviderConfig):
+    """Azure Anthropic Foundry configuration."""
+    deployment_name: Optional[str] = None
+    api_version: Optional[str] = "v1"
+
+    @classmethod
+    def from_env(cls) -> "AzureAnthropicConfig":
+        """Create Azure Anthropic configuration from environment variables."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        api_key = os.getenv("AZURE_ANTHROPIC_API_KEY")
+        endpoint = os.getenv("AZURE_ANTHROPIC_ENDPOINT")
+        model = os.getenv("AZURE_ANTHROPIC_MODEL", "claude-sonnet-4-5")
+        deployment_name = os.getenv("AZURE_ANTHROPIC_DEPLOYMENT_NAME", model)
+
+        logger.info(
+            f"Azure Anthropic config from env - API Key: {'***' if api_key else 'None'}, "
+            f"Endpoint: {endpoint}, Model: {model}, Deployment: {deployment_name}"
+        )
+
+        return cls(
+            provider_name="azure_anthropic",
+            api_key=api_key,
+            endpoint=endpoint,
+            model=model,
+            deployment_name=deployment_name,
             extra_params={}
         )

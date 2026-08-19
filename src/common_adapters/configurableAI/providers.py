@@ -1,6 +1,6 @@
 """
 Provider registry and base provider interface.
-Only supports Azure and Quasar providers.
+Supports Azure OpenAI, Azure Anthropic and Quasar providers.
 """
 
 from abc import ABC, abstractmethod
@@ -200,12 +200,73 @@ class QuasarProvider(BaseAIProvider):
         return bool(self.config.api_key and self.config.endpoint)
 
 
+class AzureAnthropicProvider(BaseAIProvider):
+    """Azure Anthropic Foundry provider implementation."""
+
+    def __init__(self, config: AIProviderConfig):
+        super().__init__(config)
+        self._client = None
+
+    def _get_client(self):
+        """Lazy initialization of Anthropic Foundry client."""
+        if self._client is None:
+            try:
+                from anthropic import Anthropic
+
+                self._client = Anthropic(
+                    api_key=self.config.api_key,
+                    base_url=self.config.endpoint.rstrip("/")
+                )
+            except ImportError:
+                raise ImportError("anthropic package is required for Azure Anthropic provider")
+
+        return self._client
+
+    async def generate_text(self, prompt: str, **kwargs) -> str:
+        """Generate text using Azure Anthropic Foundry."""
+        import asyncio
+
+        def _sync_generate():
+            client = self._get_client()
+
+            response = client.messages.create(
+                model=getattr(self.config, 'deployment_name', None) or self.config.model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=kwargs.get("max_tokens", 4096),
+                temperature=kwargs.get("temperature", 0.7),
+                **{
+                    k: v for k, v in kwargs.items()
+                    if k not in {"max_tokens", "temperature"}
+                }
+            )
+
+            content_blocks = getattr(response, "content", [])
+            text_parts = [block.text for block in content_blocks if hasattr(block, "text")]
+            return "\n".join(text_parts).strip()
+
+        return await asyncio.get_event_loop().run_in_executor(None, _sync_generate)
+
+    async def generate_embeddings(self, texts: List[str], **kwargs) -> List[List[float]]:
+        """Azure Anthropic embeddings are not currently supported."""
+        raise NotImplementedError("Azure Anthropic provider does not support embeddings")
+
+    def validate_config(self) -> bool:
+        """Validate Azure Anthropic configuration."""
+        return bool(
+            self.config.api_key and
+            self.config.endpoint and
+            self.config.model
+        )
+
+
 class ProviderRegistry:
-    """Registry for AI providers. Only supports Azure and Quasar."""
+    """Registry for AI providers."""
     
     _providers: Dict[str, Type[BaseAIProvider]] = {
         "azure": AzureOpenAIProvider,
-        "quasar": QuasarProvider
+        "quasar": QuasarProvider,
+        "azure_anthropic": AzureAnthropicProvider,
+        "anthropic": AzureAnthropicProvider
     }
     
     @classmethod

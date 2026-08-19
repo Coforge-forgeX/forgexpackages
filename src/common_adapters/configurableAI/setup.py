@@ -12,6 +12,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         "openai>=1.0.0",
+        "anthropic>=0.40.0",
         "google-cloud-aiplatform>=1.0.0",
         "numpy>=1.20.0",
     ],

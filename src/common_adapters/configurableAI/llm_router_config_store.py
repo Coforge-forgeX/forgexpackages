@@ -21,7 +21,7 @@ from pymongo import MongoClient
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_PROVIDERS = ["azure", "quasar"]
+SUPPORTED_PROVIDERS = ["azure", "azure_anthropic", "anthropic", "quasar"]
 DEFAULT_CONFIG_KEY = "__workspace_default__"
 LLM_CONFIG_DB_NAME = "llm_configs"
 LLM_CONFIG_COLLECTION_NAME = "workspace_configs"
@@ -203,7 +203,7 @@ class LLMRouterConfigStore:
         Returns:
             Deployment name for Azure, or model_name for other providers
         """
-        if provider.lower().strip() != "azure":
+        if provider.lower().strip() not in ["azure", "azure_anthropic", "anthropic"]:
             return model_name
         
         creds = self.get_provider_credentials(workspace_id, provider)
@@ -251,7 +251,7 @@ class LLMRouterConfigStore:
             "model": model,
             "extra_params": creds.get("extra_config") or {},
         }
-        if provider == "azure":
+        if provider in ["azure", "azure_anthropic", "anthropic"]:
             config["deployment_name"] = deployment_name
             config["api_version"] = creds.get("api_version")
         return config
