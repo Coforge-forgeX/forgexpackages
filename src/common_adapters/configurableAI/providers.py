@@ -265,8 +265,7 @@ class ProviderRegistry:
     _providers: Dict[str, Type[BaseAIProvider]] = {
         "azure": AzureOpenAIProvider,
         "quasar": QuasarProvider,
-        "azure_anthropic": AzureAnthropicProvider,
-        "anthropic": AzureAnthropicProvider
+        "azure_anthropic": AzureAnthropicProvider
     }
     
     @classmethod

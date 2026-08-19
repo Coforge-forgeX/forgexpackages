@@ -822,7 +822,7 @@ class ConfigurableAIManager:
             # Create config from environment
             if provider_name == "azure":
                 config = AzureOpenAIConfig.from_env()
-            elif provider_name in ["azure_anthropic", "anthropic"]:
+            elif provider_name == "azure_anthropic":
                 config = AzureAnthropicConfig.from_env()
             elif provider_name == "quasar":
                 config = QuasarConfig.from_env()
@@ -1063,7 +1063,7 @@ class ConfigurableAIManager:
         
         if provider_name == "azure":
             return AzureOpenAIConfig(**config_dict)
-        elif provider_name in ["azure_anthropic", "anthropic"]:
+        elif provider_name == "azure_anthropic":
             return AzureAnthropicConfig(**config_dict)
         elif provider_name == "quasar":
             return QuasarConfig(**config_dict)
