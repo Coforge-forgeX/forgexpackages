@@ -40,7 +40,16 @@ async def initialize_state_history(state: ReactGraphState,session_manager , msgs
         logger.warning("Session service unavailable - skipping history initialization")
         return state
     
-    history = session_manager.load_history(workspace_id,user_id,conversation_id , msgs)
+    history = await session_manager.load_history(
+        workspace_id,
+        user_id,
+        conversation_id,
+        msgs,
+    )
+
+    if history is None:
+        history = []
+
     state['messages'] = add_messages(state['messages'], history)
     logger.info("Initialized state history with past messages.")
     return state
@@ -132,4 +141,3 @@ def create_jira_graph_with_history(session_manager, msgs: int):
 
     # Compile with recursion limit to prevent infinite retries
     return graph.compile()
-
