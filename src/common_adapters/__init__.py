@@ -8,13 +8,16 @@ This package provides cloud-agnostic adapters and utilities for:
 - MCP client framework
 - Unified WebSocket relay for Service Bus
 - And more...
-"""
 
-from . import cloud
-from . import notifications
-from . import progress
-from . import mcp
-from . import relay
+Import behavior:
+This package intentionally avoids importing subpackages at module import time.
+Many subpackages depend on optional third-party libraries; eager imports would
+break lightweight consumers that only need a small utility.
+
+Use explicit imports such as:
+- `from common_adapters.context_compaction.compactor import ContextCompactor`
+- `from common_adapters.input_validation import is_valid_user_prompt`
+"""
 
 __all__ = [
     "cloud",
@@ -22,4 +25,5 @@ __all__ = [
     "progress",
     "mcp",
     "relay",
+    "input_validation",
 ]
